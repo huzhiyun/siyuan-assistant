@@ -1,4 +1,4 @@
-[中文](https://github.com/siyuan-note/plugin-sample/blob/main/README_zh_CN.md)
+[中文](https://github.com/siyuan-note/plugin-sample/blob/main/README_zh-CN.md)
 
 # SiYuan plugin sample
 
@@ -51,15 +51,15 @@ A typical example is as follows:
   "disabledInPublish": false,
   "displayName": {
     "default": "Plugin Sample",
-    "zh_CN": "插件示例"
+    "zh-CN": "插件示例"
   },
   "description": {
     "default": "This is a plugin development sample",
-    "zh_CN": "这是一个插件开发示例"
+    "zh-CN": "这是一个插件开发示例"
   },
   "readme": {
     "default": "README.md",
-    "zh_CN": "README_zh_CN.md"
+    "zh-CN": "README_zh-CN.md"
   },
   "funding": {
     "custom": ["https://ld246.com/sponsor"]
@@ -96,13 +96,13 @@ A typical example is as follows:
   * `all`: All environments
 * `displayName`: Plugin name (plain text), displayed in the marketplace list
   * `default`: Default language, must exist. If the plugin supports English, English should be used here
-  * `zh_CN`, `en_US` and other languages: optional
+  * `zh-CN`, `en` and other languages: optional, must be [BCP 47](https://tools.ietf.org/html/bcp47) tags (e.g. `zh-CN`, `zh-TW`, `en`, `ja`, `pt-BR`)
 * `description`: Plugin description (plain text), displayed in the marketplace list
   * `default`: Default language, must exist. If the plugin supports English, English should be used here
-  * `zh_CN`, `en_US` and other languages: optional
+  * `zh-CN`, `en` and other languages: optional, must be BCP 47 tags
 * `readme`: Readme file name, displayed in the marketplace details page
   * `default`: Default language, must exist. If the plugin supports English, English should be used here
-  * `zh_CN`, `en_US` and other languages: optional
+  * `zh-CN`, `en` and other languages: optional, must be BCP 47 tags
 * `funding`: Plugin sponsorship information, only one type will be displayed in the marketplace
   * `openCollective`: Open Collective name
   * `patreon`: Patreon name
