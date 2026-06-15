@@ -1,4 +1,4 @@
-[中文](https://github.com/siyuan-note/plugin-sample/blob/main/README_zh-CN.md)
+[中文](https://github.com/siyuan-note/plugin-sample/blob/main/README.zh-CN.md)
 
 # SiYuan plugin sample
 
@@ -59,7 +59,7 @@ A typical example is as follows:
   },
   "readme": {
     "default": "README.md",
-    "zh-CN": "README_zh-CN.md"
+    "zh-CN": "README.zh-CN.md"
   },
   "funding": {
     "custom": ["https://ld246.com/sponsor"]
