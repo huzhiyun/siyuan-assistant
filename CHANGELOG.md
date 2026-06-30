@@ -1,6 +1,9 @@
 # Changelog
 
-## v0.4.8
+## v0.4.9 
+
+
+## v0.4.8 2026-6-30
 
 * [Upgrade devDependencies and implement kernel plugin demo](https://github.com/siyuan-note/plugin-sample/pull/42)
 
