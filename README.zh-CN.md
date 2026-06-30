@@ -50,15 +50,15 @@
   "disabledInPublish": false,
   "displayName": {
     "default": "Plugin Sample",
-    "zh_CN": "插件示例"
+    "zh-CN": "插件示例"
   },
   "description": {
     "default": "This is a plugin development sample",
-    "zh_CN": "这是一个插件开发示例"
+    "zh-CN": "这是一个插件开发示例"
   },
   "readme": {
     "default": "README.md",
-    "zh_CN": "README_zh_CN.md"
+    "zh-CN": "README.zh-CN.md"
   },
   "funding": {
     "custom": ["https://ld246.com/sponsor"]
@@ -95,13 +95,13 @@
   * `all`：所有环境
 * `displayName`：插件名称（纯文本），在插件集市列表中显示
   * `default`：默认语言，必须存在。如果插件支持英文，此处应使用英文
-  * `zh_CN`、`en_US` 等其他语言：可选
+  * `zh-CN`、`en` 等其他语言：可选，须为 [BCP 47](https://tools.ietf.org/html/bcp47) 标签（如 `zh-CN`、`zh-TW`、`en`、`ja`、`pt-BR`）
 * `description`：插件描述（纯文本），在插件集市列表中显示
   * `default`：默认语言，必须存在。如果插件支持英文，此处应使用英文
-  * `zh_CN`、`en_US` 等其他语言：可选
+  * `zh-CN`、`en` 等其他语言：可选，须为 BCP 47 标签
 * `readme`：自述文件名，在插件集市详情页中显示
   * `default`：默认语言，必须存在。如果插件支持英文，此处应使用英文
-  * `zh_CN`、`en_US` 等其他语言：可选
+  * `zh-CN`、`en` 等其他语言：可选，须为 BCP 47 标签
 * `funding`：插件赞助信息，集市仅显示其中一种
   * `openCollective`：Open Collective 名称
   * `patreon`：Patreon 名称

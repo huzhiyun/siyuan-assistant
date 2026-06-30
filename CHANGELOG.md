@@ -6,6 +6,11 @@
 ## v0.4.8 2026-6-30
 
 * [Upgrade devDependencies and implement kernel plugin demo](https://github.com/siyuan-note/plugin-sample/pull/42)
+* [Enhance KernelPlugin with MCP tool registration and update ESLint](https://github.com/siyuan-note/plugin-sample/pull/47)
+* Migrate i18n locale codes from legacy underscore form (`zh_CN`/`en_US`) to [BCP 47](https://tools.ietf.org/html/bcp47) (`zh-CN`/`en`)
+  * Aligns with SiYuan kernel RFC 5646 / BCP 47 lang code refactor (see https://github.com/siyuan-note/siyuan/issues/7098)
+  * `plugin.json` keys, i18n file names (`src/i18n/*.json`) and `README.zh-CN.md` filename updated accordingly
+  * Bump `minAppVersion` to `3.7.0` (older SiYuan versions will fall back to `default` locale for this plugin)
 
 ## v0.4.7 2026-04-14
 
