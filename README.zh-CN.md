@@ -45,6 +45,7 @@
   "url": "https://github.com/siyuan-note/plugin-sample",
   "version": "0.4.2",
   "minAppVersion": "3.3.0",
+  "kernels": ["all"],
   "backends": ["all"],
   "frontends": ["all"],
   "disabledInPublish": false,
@@ -86,6 +87,8 @@
   * `ios`：iOS 端
   * `harmony`：鸿蒙端
   * `all`：所有环境
+* `kernels`：插件的内核插件（`kernel.js`）支持的后端环境，可选值同 `backends`（`windows`, `linux`, `darwin`, `docker`, `android`, `ios`, `harmony` 和 `all`）
+  * 仅在插件包含内核插件时需要声明；该字段缺失或为空时不会启动内核插件，但插件仍可安装并在前端使用
 * `frontends`：插件需要的前端环境，可选值为 `desktop`, `desktop-window`, `mobile`, `browser-desktop`, `browser-mobile` 和 `all`
   * `desktop`：桌面端
   * `desktop-window`：桌面端页签转换的独立窗口

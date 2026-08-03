@@ -46,6 +46,7 @@ A typical example is as follows:
   "url": "https://github.com/siyuan-note/plugin-sample",
   "version": "0.4.2",
   "minAppVersion": "3.3.0",
+  "kernels": ["all"],
   "backends": ["all"],
   "frontends": ["all"],
   "disabledInPublish": false,
@@ -87,6 +88,8 @@ A typical example is as follows:
   * `ios`: iOS APP
   * `harmony`: HarmonyOS APP
   * `all`: All environments
+* `kernels`: Backend environment supported by the plugin's kernel plugin (`kernel.js`), optional values are the same as `backends` (`windows`, `linux`, `darwin`, `docker`, `android`, `ios`, `harmony` and `all`)
+  * Only needed when the plugin includes a kernel plugin; if this field is missing or empty, the kernel plugin will not be started, but the plugin can still be installed and used on the frontend
 * `frontends`: Frontend environment required by the plugin, optional values are `desktop`, `desktop-window`, `mobile`, `browser-desktop`, `browser-mobile` and `all`
   * `desktop`: Desktop
   * `desktop-window`: Desktop window converted from tab
