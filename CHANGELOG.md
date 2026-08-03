@@ -1,7 +1,8 @@
 # Changelog
 
-## v0.4.9 
+## v0.4.9 2026-8-4
 
+* [Add documentation for the kernels field in plugin.json](https://github.com/siyuan-note/plugin-sample/issues/48)
 
 ## v0.4.8 2026-6-30
 
