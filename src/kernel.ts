@@ -100,13 +100,13 @@ class KernelPlugin {
 
     /**
      * 演示 {@link kernel.IRpc} 的用法。
-     * 演示 {@link kernel.IMcp} 的用法。
+     * 演示 {@link kernel.IAgent} 的用法。
      * 演示 {@link kernel.IStorage} 的用法。
      *
      * @remarks
-     * 在这里注册 RPC 方法与 MCP 工具，使其在插件到达 `running` 状态后可用。
+     * 在这里注册 RPC 方法与智能体能力，使其在插件到达 `running` 状态后可用。
      * 在 `running` 之前对 RPC 的调用会以 `-32002` 拒绝。
-     * 在 `running` 之前对 MCP 工具的调用会返回错误。
+     * 在 `running` 之前对智能体能力的调用会返回错误。
      *
      * {@link kernel.IStorage} 的路径相对于 `data/storage/petal/<plugin-name>/`。
      * 内核会阻止路径遍历。
@@ -115,12 +115,12 @@ class KernelPlugin {
      *
      * ---
      * Demonstrates {@link kernel.IRpc} usage.
-     * Demonstrates {@link kernel.IMcp} usage.
+     * Demonstrates {@link kernel.IAgent} usage.
      * Demonstrates {@link kernel.IStorage} usage.
      *
-     * Register RPC methods and MCP tools here so they are ready once the plugin reaches the `running` state.
+     * Register RPC methods and Agent capabilities here so they are ready once the plugin reaches the `running` state.
      * RPC calls are rejected with `-32002` before `running` is reached.
-     * MCP tool calls return errors before `running` is reached.
+     * Agent capability calls return errors before `running` is reached.
      *
      * {@link kernel.IStorage} paths are relative to `data/storage/petal/<plugin-name>/`.
      * Path traversal is blocked by the kernel.
@@ -133,7 +133,7 @@ class KernelPlugin {
      * ```
      */
     private async onload(): Promise<void> {
-        const {rpc, mcp, storage, logger, plugin, client} = this.siyuan;
+        const {rpc, agent, storage, logger, plugin, client} = this.siyuan;
 
         // ── siyuan.logger（示例）
         // ── siyuan.logger (example)
@@ -177,27 +177,58 @@ class KernelPlugin {
             "Broadcasts the received arguments to all connected clients.",
         );
 
-        // ── siyuan.mcp 示例
-        // registerTool(name, config, handler)：注册一个 MCP 工具。
-        // registerTool(name, config, handler): registers an MCP tool.
-        const tool = await mcp.registerTool(
+        // ── siyuan.agent 示例
+        // registerCapability(name, config, handler)：注册一个智能体能力。
+        // registerCapability(name, config, handler): registers an Agent capability.
+        const capability = await agent.registerCapability(
             "echo",
             {
-                title: "Echo Tool",
-                description: "A tool that echoes its input",
+                title: "Echo or Log",
+                description: "Echoes a message or writes it to the kernel log",
                 inputSchema: {
                     type: "object",
+                    properties: {
+                        action: {
+                            type: "string",
+                            enum: ["echo", "log"],
+                        },
+                        message: {
+                            type: "string",
+                        },
+                    },
+                    required: ["action", "message"],
                 },
                 outputSchema: {
                     type: "object",
+                    properties: {
+                        action: {
+                            type: "string",
+                        },
+                        message: {
+                            type: "string",
+                        },
+                    },
+                    required: ["action", "message"],
+                },
+                actionEffects: {
+                    echo: {},
+                    log: {
+                        localWrite: true,
+                    },
                 },
             },
             async (input: Record<string, any>) => {
-                await logger.debug("MCP tool [echo] called with:", input);
-                return input;
+                const result = {
+                    action: input.action,
+                    message: String(input.message),
+                };
+                if (input.action === "log") {
+                    await logger.info("Agent capability [echo] logged:", result.message);
+                }
+                return result;
             },
         );
-        await logger.debug("MCP tool registered:", tool);
+        await logger.debug("Agent capability registered:", capability);
 
         // ── siyuan.storage 示例
 
@@ -396,7 +427,7 @@ class KernelPlugin {
      * After broadcasting, close any open client-side connections to avoid resource leaks in the kernel process.
      */
     private async onunload(): Promise<void> {
-        const {rpc, mcp, logger, storage} = this.siyuan;
+        const {rpc, agent, logger, storage} = this.siyuan;
 
         // 解除对插件存储目录的文件系统事件的监听。
         // Unwatch filesystem events in the plugin storage directory.
@@ -407,9 +438,9 @@ class KernelPlugin {
         await rpc.unbind("echo");
         await rpc.unbind("echo-notify");
 
-        // 注销在 onload 中注册的 MCP 工具。
-        // Unregister the MCP tool registered in onload.
-        await mcp.unregisterTool("echo");
+        // 注销在 onload 中注册的智能体能力。
+        // Unregister the Agent capability registered in onload.
+        await agent.unregisterCapability("echo");
 
         // 向所有已连接的 RPC WebSocket 客户端推送一条通知。
         // Push a notification to all connected RPC WebSocket clients.
