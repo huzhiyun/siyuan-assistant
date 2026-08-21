@@ -2,6 +2,8 @@
 
 ## v0.5.1 2026
 
+* [Add an editor breadcrumb button demo](https://github.com/siyuan-note/siyuan/issues/18856)
+
 ## v0.5.0 2026-08-13
 
 * [Migrate the kernel plugin sample from MCP tools to Agent capabilities](https://github.com/siyuan-note/siyuan/issues/18638)
