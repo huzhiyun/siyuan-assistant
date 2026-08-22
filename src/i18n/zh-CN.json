@@ -1,15 +1,6 @@
 {
-  "addTopBarIcon": "使用插件添加一个顶栏按钮",
-  "toggleEditorFullscreen": "切换编辑器全屏",
-  "cancel": "取消",
-  "save": "保存",
-  "byeMenu": "再见，菜单！",
-  "helloPlugin": "你好，插件！",
-  "byePlugin": "再见，插件！",
-  "showDialog": "弹出一个对话框",
-  "getTab": "在日志中打印出已打开的所有自定义页签",
-  "removedData": "数据已删除",
-  "confirmRemove": "确认删除 ${name} 中的数据？",
-  "insertEmoji": "插入表情",
-  "removeSpace": "移除空格"
+  "cmdDocxImport": "DOCX 导入",
+  "cmdFlatten": "标题降级为 H5",
+  "cmdImgWidth": "图片宽度设置",
+  "cmdSection": "节级导出（复制 Markdown）"
 }

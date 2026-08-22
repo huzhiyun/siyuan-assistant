@@ -1,22 +1,32 @@
-.plugin-sample {
-  &__custom-tab {
-    background-color: var(--b3-theme-background);
-    height: 100%;
-    width: 100%;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-  }
-
-  &__custom-dock {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-  }
-
-  &__time {
-    background: var(--b3-card-info-background);
+.syass__imglist {
+    max-height: 260px;
+    overflow-y: auto;
+    border: 1px solid var(--b3-theme-surface-light);
     border-radius: 4px;
-    padding: 2px 8px;
-  }
+    padding: 4px;
+}
+
+.syass__imgitem {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--b3-theme-surface-light);
+    font-size: 12px;
+}
+
+.syass__imgitem:last-child {
+    border-bottom: none;
+}
+
+.syass__imgname {
+    color: var(--b3-theme-on-surface);
+    word-break: break-all;
+    margin-right: 8px;
+}
+
+.syass__imgdim {
+    color: var(--b3-theme-secondary);
+    white-space: nowrap;
+    flex-shrink: 0;
 }

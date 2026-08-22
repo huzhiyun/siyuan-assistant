@@ -1,15 +1,6 @@
 {
-  "addTopBarIcon": "Add a top bar icon by plugin",
-  "toggleEditorFullscreen": "Toggle editor fullscreen",
-  "cancel": "Cancel",
-  "save": "Save",
-  "byeMenu": "Bye, Menu!",
-  "helloPlugin": "Hello, Plugin!",
-  "byePlugin": "Bye, Plugin!",
-  "showDialog": "Show dialog",
-  "getTab": "Print out all opened custom tabs in the debugger",
-  "removedData": "Data deleted",
-  "confirmRemove": "Confirm to delete the data in ${name}?",
-  "insertEmoji": "Insert Emoji",
-  "removeSpace": "Remove Space"
+  "cmdDocxImport": "Import DOCX",
+  "cmdFlatten": "Flatten headings to H5",
+  "cmdImgWidth": "Set image width",
+  "cmdSection": "Export section (copy Markdown)"
 }

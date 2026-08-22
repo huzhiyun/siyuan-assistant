@@ -1,994 +1,804 @@
+/*
+ * SiYuan Assistant (思源助手)
+ * v0.1.0 — 前端插件，minAppVersion 3.6.4
+ *
+ * 功能：
+ *  1. DOCX 导入（JSZip 解析 → 图片上传 → createDocWithMd → renameDoc 设标题）
+ *  2. 标题扁平化（当前文档 H2~H6 全部降级为 H5，H1 不动）
+ *  3. 图片宽度设置（setBlockAttrs custom-data-width-percent，自动横85%/竖50%）
+ *  4. 节级导出（getDoc HTML 按 data-node-index 切片 → markdown 复制）
+ */
 import {
     Plugin,
     showMessage,
     confirm,
     Dialog,
     Menu,
-    openTab,
-    adaptHotkey,
-    getFrontend,
-    getBackend,
-    Setting,
     fetchPost,
-    Protyle,
-    openWindow,
-    IOperation,
-    Constants,
-    openMobileFileById,
-    lockScreen,
-    ICard,
-    ICardData,
-    Custom,
-    exitSiYuan,
-    getModelByDockType,
-    getAllEditor,
-    Files,
-    platformUtils,
-    openSetting,
-    openAttributePanel,
-    saveLayout,
-    IMenuItem,
-    IKernelPluginState,
-    IKernelPluginRpcCall,
+    getFrontend,
 } from "siyuan";
+import { parseDocx } from "./docx";
 import "./index.scss";
 
-const STORAGE_NAME = "menu-config";
-const TAB_TYPE = "custom_tab";
-const DOCK_TYPE = "dock_tab";
+// ---------- WordprocessingML 命名空间 ----------
 
-export default class PluginSample extends Plugin {
-    private custom: () => Custom;
-    private isMobile: boolean;
-    private blockIconEventBindThis = this.blockIconEvent.bind(this);
+interface ApiResp {
+    code: number;
+    msg: string;
+    data: any;
+}
 
-    updateProtyleToolbar(toolbar: Array<string | IMenuItem>) {
-        toolbar.push("|");
-        toolbar.push({
-            name: "insert-smail-emoji",
-            icon: "iconEmoji",
-            hotkey: "⇧⌘I",
-            tipPosition: "n",
-            tip: this.i18n.insertEmoji,
-            click(protyle: Protyle) {
-                protyle.insert("😊");
-            },
-        });
-        return toolbar;
+function api(path: string, payload: any): Promise<ApiResp> {
+    return new Promise((resolve, reject) => {
+        fetchPost(path, payload, ((resp: any) => {
+            if (resp && resp.code === 0) {
+                resolve(resp as ApiResp);
+            } else {
+                reject(new Error((resp && resp.msg) || `API ${path} 失败`));
+            }
+        }) as any);
+    });
+}
+
+/** 思源资产访问 URL（渲染进程内可用） */
+function assetUrl(src: string): string {
+    const token = window.localStorage.getItem("token") || "";
+    const clean = src.replace(/^assets\//, "");
+    return `${location.origin}/assets/${clean}?token=${encodeURIComponent(token)}`;
+}
+
+async function copyText(text: string): Promise<boolean> {
+    try {
+        await navigator.clipboard.writeText(text);
+        return true;
+    } catch (e) {
+        try {
+            const ta = document.createElement("textarea");
+            ta.value = text;
+            ta.style.position = "fixed";
+            ta.style.opacity = "0";
+            document.body.appendChild(ta);
+            ta.select();
+            const ok = document.execCommand("copy");
+            document.body.removeChild(ta);
+            return ok;
+        } catch (e2) {
+            return false;
+        }
     }
+}
 
-    onload() {
-        this.kernel.rpc.bind("unload", this.onKernelPluginUnload);
-        this.kernel.rpc.bind("notify", this.onKernelPluginNotify);
-        this.eventBus.on("kernel-plugin-state-change", this.onKernelPluginStateChange);
 
-        this.data[STORAGE_NAME] = {readonlyText: "Readonly"};
+/** 图片块信息（用于宽度设置） */
+interface ImgBlockInfo {
+    id: string;
+    src: string;
+    width: number;
+    height: number;
+    pct: number;
+}
 
-        const frontEnd = getFrontend();
-        this.isMobile = frontEnd === "mobile" || frontEnd === "browser-mobile";
-        this.addBreadcrumbButton({
-            id: "fullscreen",
-            icon: "iconFullscreen",
-            title: this.i18n.toggleEditorFullscreen,
-            callback: (event, protyle) => {
-                event.preventDefault();
-                protyle.element.classList.toggle("fullscreen");
-                protyle.getInstance().resize();
-            },
-        });
-        // 图标的制作参见帮助文档
-        this.addIcons(`<symbol id="iconFace" viewBox="0 0 32 32">
-<path d="M13.667 17.333c0 0.92-0.747 1.667-1.667 1.667s-1.667-0.747-1.667-1.667 0.747-1.667 1.667-1.667 1.667 0.747 1.667 1.667zM20 15.667c-0.92 0-1.667 0.747-1.667 1.667s0.747 1.667 1.667 1.667 1.667-0.747 1.667-1.667-0.747-1.667-1.667-1.667zM29.333 16c0 7.36-5.973 13.333-13.333 13.333s-13.333-5.973-13.333-13.333 5.973-13.333 13.333-13.333 13.333 5.973 13.333 13.333zM14.213 5.493c1.867 3.093 5.253 5.173 9.12 5.173 0.613 0 1.213-0.067 1.787-0.16-1.867-3.093-5.253-5.173-9.12-5.173-0.613 0-1.213 0.067-1.787 0.16zM5.893 12.627c2.28-1.293 4.040-3.4 4.88-5.92-2.28 1.293-4.040 3.4-4.88 5.92zM26.667 16c0-1.040-0.16-2.040-0.44-2.987-0.933 0.2-1.893 0.32-2.893 0.32-4.173 0-7.893-1.92-10.347-4.92-1.4 3.413-4.187 6.093-7.653 7.4 0.013 0.053 0 0.12 0 0.187 0 5.88 4.787 10.667 10.667 10.667s10.667-4.787 10.667-10.667z"></path>
-</symbol>
-<symbol id="iconSaving" viewBox="0 0 32 32">
-<path d="M20 13.333c0-0.733 0.6-1.333 1.333-1.333s1.333 0.6 1.333 1.333c0 0.733-0.6 1.333-1.333 1.333s-1.333-0.6-1.333-1.333zM10.667 12h6.667v-2.667h-6.667v2.667zM29.333 10v9.293l-3.76 1.253-2.24 7.453h-7.333v-2.667h-2.667v2.667h-7.333c0 0-3.333-11.28-3.333-15.333s3.28-7.333 7.333-7.333h6.667c1.213-1.613 3.147-2.667 5.333-2.667 1.107 0 2 0.893 2 2 0 0.28-0.053 0.533-0.16 0.773-0.187 0.453-0.347 0.973-0.427 1.533l3.027 3.027h2.893zM26.667 12.667h-1.333l-4.667-4.667c0-0.867 0.12-1.72 0.347-2.547-1.293 0.333-2.347 1.293-2.787 2.547h-8.227c-2.573 0-4.667 2.093-4.667 4.667 0 2.507 1.627 8.867 2.68 12.667h2.653v-2.667h8v2.667h2.68l2.067-6.867 3.253-1.093v-4.707z"></path>
-</symbol>`);
+interface HeadingInfo {
+    idx: number;
+    level: number;
+    text: string;
+}
 
-        this.custom = this.addTab({
-            type: TAB_TYPE,
-            init() {
-                this.element.innerHTML = `<div class="plugin-sample__custom-tab">${this.data.text}</div>`;
-            },
-            beforeDestroy() {
-                console.log("before destroy tab:", TAB_TYPE);
-            },
-            destroy() {
-                console.log("destroy tab:", TAB_TYPE);
-            },
-        });
+export default class SiYuanAssistant extends Plugin {
+    private isMobile = false;
+
+    async onload() {
+        this.isMobile = ["mobile", "browser-mobile"].includes(getFrontend());
+        this.addIcons(`<symbol id="iconSyassImport" viewBox="0 0 32 32"><path d="M3 6h9l2 2h9a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/><path d="M16 12v8M12 16l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+<symbol id="iconSyassFlatten" viewBox="0 0 32 32"><path d="M16 4v15M10 13l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 26h20" stroke="currentColor" stroke-width="2"/></symbol>
+<symbol id="iconSyassImage" viewBox="0 0 32 32"><path d="M4 6h24v20H4z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="11" cy="11" r="2.5" fill="currentColor"/><path d="M4 22l7-7 6 6 4-4 7 7" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+<symbol id="iconSyassSection" viewBox="0 0 32 32"><path d="M4 4h16v6h-2V6H6v20h12v-4h2v6H4z" fill="currentColor"/><path d="M20 8l6 6-6 6-1.4-1.4 3.6-3.6H11v-2h11.2l-3.6-3.6z" fill="currentColor"/></symbol>`);
 
         this.addCommand({
-            langKey: "showDialog",
-            hotkey: "⇧⌘O",
+            langKey: "cmdDocxImport",
+            hotkey: "⇧⌘I",
             callback: () => {
-                this.showDialog();
+                this.openDocxImportDialog();
             },
         });
-
         this.addCommand({
-            langKey: "getTab",
-            hotkey: "⇧⌘M",
-            globalCallback: () => {
-                console.log(this.getOpenedTab());
+            langKey: "cmdFlatten",
+            hotkey: "⇧⌘J",
+            callback: () => {
+                this.openFlattenDialog();
             },
         });
-        this.addDock({
-            config: {
-                position: "LeftBottom",
-                size: {width: 200, height: 0},
-                icon: "iconSaving",
-                title: "Custom Dock",
-                hotkey: "⌥⌘W",
-            },
-            data: {
-                text: "This is my custom dock",
-            },
-            type: DOCK_TYPE,
-            resize() {
-                console.log(DOCK_TYPE + " resize");
-            },
-            update() {
-                console.log(DOCK_TYPE + " update");
-            },
-            init: (dock) => {
-                if (this.isMobile) {
-                    dock.element.innerHTML = `<div class="toolbar toolbar--border toolbar--dark">
-    <svg class="toolbar__icon"><use xlink:href="#iconEmoji"></use></svg>
-        <div class="toolbar__text">Custom Dock</div>
-    </div>
-    <div class="fn__flex-1 plugin-sample__custom-dock">
-        ${dock.data.text}
-    </div>
-</div>`;
-                } else {
-                    dock.element.innerHTML = `<div class="fn__flex-1 fn__flex-column">
-    <div class="block__icons">
-        <div class="block__logo">
-            <svg class="block__logoicon"><use xlink:href="#iconEmoji"></use></svg>Custom Dock
-        </div>
-        <span class="fn__flex-1 fn__space"></span>
-        <span data-type="min" class="block__icon ariaLabel" data-position="north" aria-label="Min ${
-                        adaptHotkey("⌘W")
-                    }"><svg><use xlink:href="#iconMin"></use></svg></span>
-    </div>
-    <div class="fn__flex-1 plugin-sample__custom-dock">
-        ${dock.data.text}
-    </div>
-</div>`;
-                }
-            },
-            destroy() {
-                console.log("destroy dock:", DOCK_TYPE);
+        this.addCommand({
+            langKey: "cmdImgWidth",
+            hotkey: "⇧⌘K",
+            callback: () => {
+                this.openImageWidthDialog();
             },
         });
-
-        const textareaElement = document.createElement("textarea");
-        this.setting = new Setting({
-            confirmCallback: () => {
-                this.saveData(STORAGE_NAME, {readonlyText: textareaElement.value}).catch(e => {
-                    showMessage(`[${this.name}] save data [${STORAGE_NAME}] fail: `, e);
-                });
+        this.addCommand({
+            langKey: "cmdSection",
+            hotkey: "⇧⌘L",
+            callback: () => {
+                this.openSectionExportDialog();
             },
         });
-        this.setting.addItem({
-            title: "Readonly text",
-            direction: "row",
-            description: "Open plugin url in browser",
-            createActionElement: () => {
-                textareaElement.className = "b3-text-field fn__block";
-                textareaElement.placeholder = "Readonly text in the menu";
-                textareaElement.value = this.data[STORAGE_NAME].readonlyText;
-                return textareaElement;
-            },
-        });
-        const btnaElement = document.createElement("button");
-        btnaElement.className = "b3-button b3-button--outline fn__flex-center fn__size200";
-        btnaElement.textContent = "Open";
-        btnaElement.addEventListener("click", () => {
-            window.open("https://github.com/siyuan-note/plugin-sample");
-        });
-        this.setting.addItem({
-            title: "Open plugin url",
-            description: "Open plugin url in browser",
-            actionElement: btnaElement,
-        });
-
-        this.protyleSlash = [{
-            filter: ["insert emoji 😊", "插入表情 😊", "crbqwx"],
-            html:
-                `<div class="b3-list-item__first"><span class="b3-list-item__text">${this.i18n.insertEmoji}</span><span class="b3-list-item__meta">😊</span></div>`,
-            id: "insertEmoji",
-            callback(protyle: Protyle) {
-                protyle.insert("😊");
-            },
-        }];
-
-        this.protyleOptions = {
-            toolbar: [
-                "block-ref",
-                "a",
-                "|",
-                "text",
-                "strong",
-                "em",
-                "u",
-                "s",
-                "mark",
-                "sup",
-                "sub",
-                "clear",
-                "|",
-                "code",
-                "kbd",
-                "tag",
-                "inline-math",
-                "inline-memo",
-            ],
-        };
-
-        console.log(this.i18n.helloPlugin);
     }
 
     onLayoutReady() {
         const topBarElement = this.addTopBar({
-            icon: "iconFace",
-            title: this.i18n.addTopBarIcon,
+            icon: "iconSyassSection",
+            title: "思源助手",
             position: "right",
             callback: () => {
-                if (this.isMobile) {
-                    this.addMenu();
-                } else {
-                    let rect = topBarElement.getBoundingClientRect();
-                    // 如果被隐藏，则使用更多按钮
-                    if (rect.width === 0) {
-                        rect = document.querySelector("#barMore").getBoundingClientRect();
-                    }
-                    if (rect.width === 0) {
-                        rect = document.querySelector("#barPlugins").getBoundingClientRect();
-                    }
-                    this.addMenu(rect);
-                }
+                const menu = new Menu("syassTopBar", () => {});
+                menu.addItem({
+                    icon: "iconSyassImport",
+                    label: "DOCX 导入…",
+                    click: () => {
+                        this.openDocxImportDialog();
+                    },
+                });
+                menu.addItem({
+                    icon: "iconSyassFlatten",
+                    label: "标题降级为 H5…",
+                    click: () => {
+                        this.openFlattenDialog();
+                    },
+                });
+                menu.addItem({
+                    icon: "iconSyassImage",
+                    label: "图片宽度…",
+                    click: () => {
+                        this.openImageWidthDialog();
+                    },
+                });
+                menu.addItem({
+                    icon: "iconSyassSection",
+                    label: "节级导出（复制 Markdown）…",
+                    click: () => {
+                        this.openSectionExportDialog();
+                    },
+                });
+                menu.open({
+                    x: topBarElement.getBoundingClientRect().x,
+                    y: topBarElement.getBoundingClientRect().y + 30,
+                });
             },
         });
-        const statusIconTemp = document.createElement("template");
-        statusIconTemp.innerHTML = `<div class="toolbar__item ariaLabel" aria-label="Remove plugin-sample Data">
-    <svg>
-        <use xlink:href="#iconTrashcan"></use>
-    </svg>
-</div>`;
-        statusIconTemp.content.firstElementChild.addEventListener("click", () => {
-            confirm("⚠️", this.i18n.confirmRemove.replace("${name}", this.name), () => {
-                this.removeData(STORAGE_NAME).then(() => {
-                    this.data[STORAGE_NAME] = {readonlyText: "Readonly"};
-                    showMessage(`[${this.name}]: ${this.i18n.removedData}`);
-                }).catch(e => {
-                    showMessage(`[${this.name}] remove data [${STORAGE_NAME}] fail: `, e);
-                });
-            });
-        });
-        this.addStatusBar({
-            element: statusIconTemp.content.firstElementChild as HTMLElement,
-        });
-        this.loadData(STORAGE_NAME).catch(e => {
-            console.log(`[${this.name}] load data [${STORAGE_NAME}] fail: `, e);
-        });
-        console.log(`frontend: ${getFrontend()}; backend: ${getBackend()}`);
+        void topBarElement;
     }
 
-    onunload() {
-        console.log(this.i18n.byePlugin);
+    onunload() {}
 
-        this.kernel.rpc.unbind("unload", this.onKernelPluginUnload);
-        this.kernel.rpc.unbind("notify", this.onKernelPluginNotify);
-        this.eventBus.off("kernel-plugin-state-change", this.onKernelPluginStateChange);
+    // ================================================================
+    // 通用工具
+    // ================================================================
+
+    private currentEditor(): IPluginEditor | null {
+        const anyThis = this as any;
+        return anyThis.getEditor ? (anyThis.getEditor() as IPluginEditor) : null;
     }
 
-    uninstall() {
-        // 卸载插件时删除插件数据
-        // Delete plugin data when uninstalling the plugin
-        this.removeData(STORAGE_NAME).catch(e => {
-            showMessage(`uninstall [${this.name}] remove data [${STORAGE_NAME}] fail: ${e.msg}`);
+    private currentDocId(): string {
+        const editor = this.currentEditor();
+        if (!editor || !editor.protyle || !editor.protyle.block) {
+            throw new Error("请先打开一个文档");
+        }
+        return editor.protyle.block.rootID;
+    }
+
+    private newDialog(title: string, content: string, width?: string): Dialog {
+        return new Dialog({
+            title,
+            content,
+            width: this.isMobile ? "92vw" : width || "560px",
         });
     }
 
-    // 使用 saveData() 存储的数据发生变更时触发，注释掉则自动禁用插件再重新启用
-    // Triggered when data stored using saveData() changes. If commented out, the plugin will be automatically disabled and then re-enabled.
-    // onDataChanged() {
-    //     console.log("onDataChanged");
-    // }
-
-    async updateCards(options: ICardData) {
-        options.cards.sort((a: ICard, b: ICard) => {
-            if (a.blockID < b.blockID) {
-                return -1;
-            }
-            if (a.blockID > b.blockID) {
-                return 1;
-            }
-            return 0;
-        });
-        return options;
+    private static escPipe(s: string): string {
+        return s.replace(/\|/g, "\\|");
     }
 
-    /* 自定义设置
-    openSetting() {
-        const dialog = new Dialog({
-            title: this.name,
-            content: `<div class="b3-dialog__content"><textarea class="b3-text-field fn__block" placeholder="readonly text in the menu"></textarea></div>
+    /** 取块 markdown 的标题级别（# 数量），非标题返回 0 */
+    private static headingLevelOfMd(md: string): number {
+        const m = /^(#{1,6})\s/.exec(md);
+        return m ? m[1].length : 0;
+    }
+
+    // ================================================================
+    // 功能 1：DOCX 导入
+    // ================================================================
+
+    private openDocxImportDialog() {
+        const dlg = this.newDialog(
+            "DOCX 导入",
+            `<div class="b3-dialog__content">
+  <div class="fn__block">
+    <label class="fn__block b3-label">目标笔记本</label>
+    <select id="syassNotebook" class="b3-select fn__block"></select>
+  </div>
+  <div class="fn__block">
+    <label class="fn__block b3-label">文档标题（留空自动取文件名）</label>
+    <input id="syassDocTitle" class="b3-text-field fn__block" placeholder="文档标题">
+  </div>
+  <div class="fn__block">
+    <label class="fn__block b3-label">选择 .docx 文件</label>
+    <input id="syassDocxFile" type="file" accept=".docx" class="fn__block">
+  </div>
+  <div class="fn__block">
+    <label class="fn__block"><input type="checkbox" id="syassKeepH1"> 正文保留一级标题（不勾选则第一个 H1 作为文档标题，正文不含 H1）</label>
+  </div>
+</div>
 <div class="b3-dialog__action">
-    <button class="b3-button b3-button--cancel">${this.i18n.cancel}</button><div class="fn__space"></div>
-    <button class="b3-button b3-button--text">${this.i18n.save}</button>
-</div>`,
-            width: this.isMobile ? "92vw" : "520px",
-        });
-        const inputElement = dialog.element.querySelector("textarea");
-        inputElement.value = this.data[STORAGE_NAME].readonlyText;
-        const btnsElement = dialog.element.querySelectorAll(".b3-button");
-        dialog.bindInput(inputElement, () => {
-            (btnsElement[1] as HTMLButtonElement).click();
-        });
-        inputElement.focus();
-        btnsElement[0].addEventListener("click", () => {
-            dialog.destroy();
-        });
-        btnsElement[1].addEventListener("click", () => {
-            this.saveData(STORAGE_NAME, {readonlyText: inputElement.value});
-            dialog.destroy();
+  <button class="b3-button b3-button--cancel" id="syassCancel">取消</button>
+  <span class="fn__space"></span>
+  <button class="b3-button b3-button--text" id="syassGo">开始导入</button>
+</div>`
+        );
+        const sel = dlg.element.querySelector("#syassNotebook") as HTMLSelectElement;
+        const fileInput = dlg.element.querySelector("#syassDocxFile") as HTMLInputElement;
+        const titleInput = dlg.element.querySelector("#syassDocTitle") as HTMLInputElement;
+        const keepH1 = dlg.element.querySelector("#syassKeepH1") as HTMLInputElement;
+        const goBtn = dlg.element.querySelector("#syassGo") as HTMLButtonElement;
+
+        api("/api/notebook/lsNotebooks", {})
+            .then((resp) => {
+                const notebooks: Array<{ id: string; name: string }> = resp.data.notebooks || [];
+                for (const nb of notebooks) {
+                    const opt = document.createElement("option");
+                    opt.value = nb.id;
+                    opt.textContent = nb.name;
+                    sel.appendChild(opt);
+                }
+            })
+            .catch((e) => {
+                showMessage(`加载笔记本列表失败: ${e.message}`);
+            });
+
+        dlg.element.querySelector("#syassCancel").addEventListener("click", () => dlg.destroy());
+        goBtn.addEventListener("click", async () => {
+            const file = fileInput.files && fileInput.files[0];
+            if (!file) {
+                showMessage("请先选择 .docx 文件");
+                return;
+            }
+            const notebook = sel.value;
+            if (!notebook) {
+                showMessage("请选择目标笔记本");
+                return;
+            }
+            goBtn.disabled = true;
+            goBtn.textContent = "导入中…";
+            try {
+                const title = (titleInput.value || file.name.replace(/\.docx$/i, "")).trim();
+                const parsed = await this.parseDocxFile(file);
+                const docId = await this.importDocx(parsed, notebook, title, keepH1.checked);
+                showMessage(`导入成功：${title}（${docId}）`);
+                dlg.destroy();
+            } catch (e) {
+                showMessage(`导入失败: ${(e as Error).message}`);
+                goBtn.disabled = false;
+                goBtn.textContent = "开始导入";
+            }
         });
     }
-    */
 
-    private readonly eventBusPaste = (event: any) => {
-        // 如果需异步处理请调用 preventDefault， 否则会进行默认处理
-        event.preventDefault();
-        // 如果使用了 preventDefault，必须调用 resolve，否则程序会卡死
-        event.detail.resolve({
-            textPlain: event.detail.textPlain.trim(),
+    private async parseDocxFile(file: File): Promise<{ md: string; title: string }> {
+        const ab = await file.arrayBuffer();
+        const baseName = file.name.replace(/\.docx$/i, "");
+        return parseDocx(ab, baseName, (blob, name, dir) => this.uploadImage(blob, name, dir));
+    }
+    private async importDocx(
+        parsed: { md: string; title: string },
+        notebook: string,
+        title: string,
+        keepH1: boolean
+    ): Promise<string> {
+        let body = parsed.md;
+        if (!keepH1) {
+            // 去掉与标题相同的开头 H1，避免正文重复
+            const re = new RegExp(`^#\\s+${SiYuanAssistant.escapeRegex(title)}\\s*\\n+`);
+            body = body.replace(re, "");
+            body = body.trim();
+        }
+        const resp = await api("/api/filetree/createDocWithMd", {
+            notebook,
+            path: "",
+            markdown: body,
         });
-    };
+        const docId = resp.data as string;
+        if (!docId) {
+            throw new Error("createDocWithMd 未返回文档 ID");
+        }
+        // 设置文档标题（标题与正文 H1 独立）
+        await api("/api/filetree/renameDoc", { id: docId, title });
+        return docId;
+    }
 
-    private readonly eventBusLog = ({detail}: any) => {
-        console.log(detail);
-    };
+    private static escapeRegex(s: string): string {
+        return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
 
-    private readonly onKernelPluginStateChange = async ({detail}: CustomEvent<IKernelPluginState>) => {
-        console.log("kernel-plugin-state-change", detail);
-        switch (detail.code) {
-            case 2: { // running
-                const params = ["param 1", "param 2"];
-                await this.kernel.rpc.notify["echo-notify"](...params);
-
-                const result = await this.kernel.rpc.call.echo(...params);
-                console.group("JSON RPC client -> kernel: call [echo] method");
-                console.log("params:", params);
-                console.log("result:", result);
-                console.groupEnd();
-
-                const request: IKernelPluginRpcCall[] = [
-                    { // call with custom id
-                        id: 0,
-                        method: "echo",
-                        params: {key1: "value1"},
-                    },
-                    { // call with auto-generated id
-                        method: "echo",
-                        params: ["key2", "value2"],
-                    },
-                    { // notify will not have response and id
-                        method: "echo-notify",
-                        params: {key3: "value3"},
-                        notification: true,
-                    },
-                    { // notify will remove id even if it is set
-                        id: "3",
-                        method: "echo-notify",
-                        params: ["key4", "value4"],
-                        notification: true,
-                    },
-                ];
-                const response = await this.kernel.rpc.batch(...request);
-                console.group("JSON RPC client -> kernel: batch call [echo] and [notify] method");
-                console.log("request:", request);
-                console.log("response:", response);
-                console.groupEnd();
-                break;
+    /** 段落 → markdown 行（含内联格式与图片占位符） */
+    private async uploadImage(blob: Blob, name: string, dir: string): Promise<string> {
+        const token = window.localStorage.getItem("token") || "";
+        const fd = new FormData();
+        fd.append("assetsDirPath", dir);
+        fd.append("file[]", blob, name);
+        const paths = ["/api/upload", "/api/asset/upload", "/api/upload2"];
+        for (const path of paths) {
+            try {
+                const resp = await fetch(path, {
+                    method: "POST",
+                    headers: { Authorization: "Token " + token },
+                    body: fd,
+                });
+                const json: any = await resp.json().catch((): null => null);
+                if (json && json.code === 0 && json.data && json.data[0] && json.data[0].url) {
+                    return json.data[0].url as string;
+                }
+            } catch (e) {
+                // 继续尝试下一个端点
             }
         }
-    };
-
-    private onKernelPluginUnload = async (...params: any[]) => {
-        console.group("JSON RPC kernel -> client: unload");
-        console.log("params:", params);
-        console.groupEnd();
-    };
-
-    private onKernelPluginNotify = async (...params: any[]) => {
-        console.group("JSON RPC kernel -> client: notify");
-        console.log("params:", params);
-        console.groupEnd();
-    };
-
-    private blockIconEvent({detail}: any) {
-        detail.menu.addItem({
-            id: "pluginSample_removeSpace",
-            iconHTML: "",
-            label: this.i18n.removeSpace,
-            click: () => {
-                const doOperations: IOperation[] = [];
-                detail.blockElements.forEach((item: HTMLElement) => {
-                    const editElement = item.querySelector('[contenteditable="true"]');
-                    if (editElement) {
-                        editElement.textContent = editElement.textContent.replace(/ /g, "");
-                        doOperations.push({
-                            id: item.dataset.nodeId,
-                            data: item.outerHTML,
-                            action: "update",
-                        });
-                    }
-                });
-                detail.protyle.getInstance().transaction(doOperations);
-            },
-        });
+        throw new Error(`上传图片失败: ${name}`);
     }
 
-    private showDialog() {
-        const dialog = new Dialog({
-            title: `SiYuan ${Constants.SIYUAN_VERSION}`,
-            content: `<div class="b3-dialog__content">
-    <div>appId:</div>
-    <div class="fn__hr"></div>
-    <div class="plugin-sample__time">${this.app.appId}</div>
-    <div class="fn__hr"></div>
-    <div class="fn__hr"></div>
-    <div>API demo:</div>
-    <div class="fn__hr"></div>
-    <div class="plugin-sample__time">System current time: <span id="time"></span></div>
-    <div class="fn__hr"></div>
-    <div class="fn__hr"></div>
-    <div>Protyle demo:</div>
-    <div class="fn__hr"></div>
-    <div id="protyle" style="height: 360px;"></div>
-</div>`,
-            width: this.isMobile ? "92vw" : "560px",
-            height: "540px",
-        });
-        new Protyle(this.app, dialog.element.querySelector("#protyle"), {
-            blockId: this.getEditor().protyle.block.rootID,
-        });
-        fetchPost("/api/system/currentTime", {}, (response) => {
-            dialog.element.querySelector("#time").innerHTML = new Date(response.data).toString();
-        });
-    }
+    // ================================================================
+    // 功能 2：标题扁平化（H2~H6 → H5）
+    // ================================================================
 
-    private addMenu(rect?: DOMRect) {
-        const menu = new Menu("topBarSample", () => {
-            console.log(this.i18n.byeMenu);
-        });
-        menu.addItem({
-            icon: "iconSettings",
-            label: "Open Setting",
-            click: () => {
-                openSetting(this.app);
-            },
-        });
-        menu.addItem({
-            icon: "iconDrag",
-            label: "Open Attribute Panel",
-            click: () => {
-                openAttributePanel({
-                    nodeElement: this.getEditor().protyle.wysiwyg.element.firstElementChild as HTMLElement,
-                    protyle: this.getEditor().protyle,
-                    focusName: "custom",
-                });
-            },
-        });
-        menu.addItem({
-            icon: "iconInfo",
-            label: "Dialog(open doc first)",
-            accelerator: this.commands[0].customHotkey,
-            click: () => {
-                this.showDialog();
-            },
-        });
-        menu.addItem({
-            icon: "iconFocus",
-            label: "Select Opened Doc(open doc first)",
-            click: () => {
-                (getModelByDockType("file") as Files).selectItem(
-                    this.getEditor().protyle.notebookId,
-                    this.getEditor().protyle.path,
-                );
-            },
-        });
-        if (!this.isMobile) {
-            menu.addItem({
-                icon: "iconFace",
-                label: "Open Custom Tab",
-                click: () => {
-                    const tab = openTab({
-                        app: this.app,
-                        custom: {
-                            icon: "iconFace",
-                            title: "Custom Tab",
-                            data: {
-                                text: platformUtils.isHuawei() ? "Hello, Huawei!" : "This is my custom tab",
-                            },
-                            id: this.name + TAB_TYPE,
-                        },
-                    });
-                    console.log(tab);
-                },
-            });
-            menu.addItem({
-                icon: "iconImage",
-                label: "Open Asset Tab(First open the Chinese help document)",
-                click: () => {
-                    const tab = openTab({
-                        app: this.app,
-                        asset: {
-                            path: "assets/paragraph-20210512165953-ag1nib4.svg",
-                        },
-                    });
-                    console.log(tab);
-                },
-            });
-            menu.addItem({
-                icon: "iconFile",
-                label: "Open Doc Tab(open doc first)",
-                click: async () => {
-                    const tab = await openTab({
-                        app: this.app,
-                        doc: {
-                            id: this.getEditor().protyle.block.rootID,
-                        },
-                    });
-                    console.log(tab);
-                },
-            });
-            menu.addItem({
-                icon: "iconSearch",
-                label: "Open Search Tab",
-                click: () => {
-                    const tab = openTab({
-                        app: this.app,
-                        search: {
-                            k: "SiYuan",
-                        },
-                    });
-                    console.log(tab);
-                },
-            });
-            menu.addItem({
-                icon: "iconRiffCard",
-                label: "Open Card Tab",
-                click: () => {
-                    const tab = openTab({
-                        app: this.app,
-                        card: {
-                            type: "all",
-                        },
-                    });
-                    console.log(tab);
-                },
-            });
-            menu.addItem({
-                icon: "iconLayout",
-                label: "Open Float Layer(open doc first)",
-                click: () => {
-                    this.addFloatLayer({
-                        refDefs: [{refID: this.getEditor().protyle.block.rootID}],
-                        x: window.innerWidth - 768 - 120,
-                        y: 32,
-                        isBacklink: false,
-                    });
-                },
-            });
-            menu.addItem({
-                icon: "iconOpenWindow",
-                label: "Open Doc Window(open doc first)",
-                click: () => {
-                    openWindow({
-                        doc: {id: this.getEditor().protyle.block.rootID},
-                    });
-                },
-            });
-        } else {
-            menu.addItem({
-                icon: "iconFile",
-                label: "Open Doc(open doc first)",
-                click: () => {
-                    openMobileFileById(this.app, this.getEditor().protyle.block.rootID);
-                },
-            });
-        }
-        menu.addItem({
-            icon: "iconLock",
-            label: "Lockscreen",
-            click: () => {
-                lockScreen(this.app);
-            },
-        });
-        menu.addItem({
-            icon: "iconQuit",
-            label: "Exit Application",
-            click: () => {
-                exitSiYuan();
-            },
-        });
-        menu.addItem({
-            icon: "iconDownload",
-            label: "Save Layout",
-            click: () => {
-                saveLayout(() => {
-                    showMessage("Layout saved");
-                });
-            },
-        });
-        menu.addItem({
-            icon: "iconScrollHoriz",
-            label: "Event Bus",
-            type: "submenu",
-            submenu: [{
-                icon: "iconSelect",
-                label: "On ws-main",
-                click: () => {
-                    this.eventBus.on("ws-main", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off ws-main",
-                click: () => {
-                    this.eventBus.off("ws-main", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On click-blockicon",
-                click: () => {
-                    this.eventBus.on("click-blockicon", this.blockIconEventBindThis);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off click-blockicon",
-                click: () => {
-                    this.eventBus.off("click-blockicon", this.blockIconEventBindThis);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On click-pdf",
-                click: () => {
-                    this.eventBus.on("click-pdf", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off click-pdf",
-                click: () => {
-                    this.eventBus.off("click-pdf", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On click-editorcontent",
-                click: () => {
-                    this.eventBus.on("click-editorcontent", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off click-editorcontent",
-                click: () => {
-                    this.eventBus.off("click-editorcontent", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On click-editortitleicon",
-                click: () => {
-                    this.eventBus.on("click-editortitleicon", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off click-editortitleicon",
-                click: () => {
-                    this.eventBus.off("click-editortitleicon", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On click-flashcard-action",
-                click: () => {
-                    this.eventBus.on("click-flashcard-action", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off click-flashcard-action",
-                click: () => {
-                    this.eventBus.off("click-flashcard-action", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On open-noneditableblock",
-                click: () => {
-                    this.eventBus.on("open-noneditableblock", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off open-noneditableblock",
-                click: () => {
-                    this.eventBus.off("open-noneditableblock", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On loaded-protyle-static",
-                click: () => {
-                    this.eventBus.on("loaded-protyle-static", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off loaded-protyle-static",
-                click: () => {
-                    this.eventBus.off("loaded-protyle-static", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On loaded-protyle-dynamic",
-                click: () => {
-                    this.eventBus.on("loaded-protyle-dynamic", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off loaded-protyle-dynamic",
-                click: () => {
-                    this.eventBus.off("loaded-protyle-dynamic", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On switch-protyle",
-                click: () => {
-                    this.eventBus.on("switch-protyle", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off switch-protyle",
-                click: () => {
-                    this.eventBus.off("switch-protyle", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On destroy-protyle",
-                click: () => {
-                    this.eventBus.on("destroy-protyle", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off destroy-protyle",
-                click: () => {
-                    this.eventBus.off("destroy-protyle", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On open-menu-doctree",
-                click: () => {
-                    this.eventBus.on("open-menu-doctree", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off open-menu-doctree",
-                click: () => {
-                    this.eventBus.off("open-menu-doctree", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On open-menu-blockref",
-                click: () => {
-                    this.eventBus.on("open-menu-blockref", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off open-menu-blockref",
-                click: () => {
-                    this.eventBus.off("open-menu-blockref", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On open-menu-fileannotationref",
-                click: () => {
-                    this.eventBus.on("open-menu-fileannotationref", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off open-menu-fileannotationref",
-                click: () => {
-                    this.eventBus.off("open-menu-fileannotationref", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On open-menu-tag",
-                click: () => {
-                    this.eventBus.on("open-menu-tag", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off open-menu-tag",
-                click: () => {
-                    this.eventBus.off("open-menu-tag", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On open-menu-link",
-                click: () => {
-                    this.eventBus.on("open-menu-link", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off open-menu-link",
-                click: () => {
-                    this.eventBus.off("open-menu-link", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On open-menu-image",
-                click: () => {
-                    this.eventBus.on("open-menu-image", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off open-menu-image",
-                click: () => {
-                    this.eventBus.off("open-menu-image", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On open-menu-av",
-                click: () => {
-                    this.eventBus.on("open-menu-av", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off open-menu-av",
-                click: () => {
-                    this.eventBus.off("open-menu-av", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On open-menu-content",
-                click: () => {
-                    this.eventBus.on("open-menu-content", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off open-menu-content",
-                click: () => {
-                    this.eventBus.off("open-menu-content", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On open-menu-breadcrumbmore",
-                click: () => {
-                    this.eventBus.on("open-menu-breadcrumbmore", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off open-menu-breadcrumbmore",
-                click: () => {
-                    this.eventBus.off("open-menu-breadcrumbmore", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On open-menu-inbox",
-                click: () => {
-                    this.eventBus.on("open-menu-inbox", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off open-menu-inbox",
-                click: () => {
-                    this.eventBus.off("open-menu-inbox", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On input-search",
-                click: () => {
-                    this.eventBus.on("input-search", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off input-search",
-                click: () => {
-                    this.eventBus.off("input-search", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On paste",
-                click: () => {
-                    this.eventBus.on("paste", this.eventBusPaste);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off paste",
-                click: () => {
-                    this.eventBus.off("paste", this.eventBusPaste);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On open-siyuan-url-plugin",
-                click: () => {
-                    this.eventBus.on("open-siyuan-url-plugin", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off open-siyuan-url-plugin",
-                click: () => {
-                    this.eventBus.off("open-siyuan-url-plugin", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On open-siyuan-url-block",
-                click: () => {
-                    this.eventBus.on("open-siyuan-url-block", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off open-siyuan-url-block",
-                click: () => {
-                    this.eventBus.off("open-siyuan-url-block", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On opened-notebook",
-                click: () => {
-                    this.eventBus.on("opened-notebook", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off opened-notebook",
-                click: () => {
-                    this.eventBus.off("opened-notebook", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On closed-notebook",
-                click: () => {
-                    this.eventBus.on("closed-notebook", this.eventBusLog);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off closed-notebook",
-                click: () => {
-                    this.eventBus.off("closed-notebook", this.eventBusLog);
-                },
-            }, {
-                icon: "iconSelect",
-                label: "On kernel-plugin-state-change",
-                click: () => {
-                    this.eventBus.on("kernel-plugin-state-change", this.onKernelPluginStateChange);
-                },
-            }, {
-                icon: "iconClose",
-                label: "Off kernel-plugin-state-change",
-                click: () => {
-                    this.eventBus.off("kernel-plugin-state-change", this.onKernelPluginStateChange);
-                },
-            }],
-        });
-        menu.addSeparator();
-        menu.addItem({
-            icon: "iconSparkles",
-            label: this.data[STORAGE_NAME].readonlyText || "Readonly",
-            type: "readonly",
-        });
-        if (this.isMobile) {
-            menu.fullscreen();
-        } else {
-            menu.open({
-                x: rect.right,
-                y: rect.bottom,
-                isLeft: true,
-            });
-        }
-    }
-
-    private getEditor() {
-        const editors = getAllEditor();
-        if (editors.length === 0) {
-            showMessage("please open doc first");
+    private async openFlattenDialog() {
+        let docId = "";
+        try {
+            docId = this.currentDocId();
+        } catch (e) {
+            showMessage((e as Error).message);
             return;
         }
-        return editors[0];
+        let headings: Array<{ id: string; level: number; text: string }> = [];
+        try {
+            const resp = await api("/api/query/sql", {
+                stmt: `SELECT id, markdown FROM blocks WHERE root_id = '${docId}' AND type = 'h'`,
+            });
+            headings = (resp.data as Array<{ id: string; markdown: string }>)
+                .map((b) => {
+                    const level = SiYuanAssistant.headingLevelOfMd(b.markdown || "");
+                    return {
+                        id: b.id,
+                        level,
+                        text: (b.markdown || "").replace(/^#{1,6}\s*/, "").replace(/\*\*/g, "").trim(),
+                    };
+                })
+                .filter((h) => h.level > 0);
+        } catch (e) {
+            showMessage(`查询标题失败: ${(e as Error).message}`);
+            return;
+        }
+        const targets = headings.filter((h) => h.level >= 2);
+        if (targets.length === 0) {
+            showMessage("当前文档没有 H2 及以上的标题，无需降级");
+            return;
+        }
+        const countByLevel: Record<number, number> = {};
+        for (const h of targets) {
+            countByLevel[h.level] = (countByLevel[h.level] || 0) + 1;
+        }
+        const summary = Object.keys(countByLevel)
+            .sort()
+            .map((l) => `H${l}×${countByLevel[parseInt(l, 10)]}`)
+            .join(" / ");
+        confirm(
+            "标题降级",
+            `当前文档标题统计：${summary}<br>将把 H2~H6 共 <b>${targets.length}</b> 个标题全部降级为 <b>H5</b>（H1 文档标题不动）。确定执行？`,
+            async () => {
+                let ok = 0;
+                for (const h of targets) {
+                    try {
+                        await api("/api/block/updateBlock", {
+                            id: h.id,
+                            dataType: "markdown",
+                            data: `##### ${h.text}`,
+                        });
+                        ok++;
+                    } catch (e) {
+                        console.warn("降级失败:", h.id, e);
+                    }
+                }
+                showMessage(`标题降级完成：${ok}/${targets.length} 个已变为 H5`);
+            }
+        );
+    }
+
+    // ================================================================
+    // 功能 3：图片宽度
+    // ================================================================
+
+    private async openImageWidthDialog() {
+        let docId = "";
+        try {
+            docId = this.currentDocId();
+        } catch (e) {
+            showMessage((e as Error).message);
+            return;
+        }
+        let rows: Array<{ id: string; markdown: string }> = [];
+        try {
+            const resp = await api("/api/query/sql", {
+                stmt: `SELECT id, markdown FROM blocks WHERE root_id = '${docId}' AND (type = 'p' OR type = 'h') AND markdown LIKE '%![%'`,
+            });
+            rows = resp.data || [];
+        } catch (e) {
+            showMessage(`查询图片失败: ${(e as Error).message}`);
+            return;
+        }
+        if (rows.length === 0) {
+            showMessage("当前文档没有图片块");
+            return;
+        }
+        const imgBlocks: ImgBlockInfo[] = [];
+        for (const row of rows) {
+            const clean = (row.markdown || "").replace(/\{:.*?\}\s*$/g, "");
+            const m = /!\[([^\]]*)\]\(([^)]+)\)/.exec(clean);
+            if (m) {
+                imgBlocks.push({ id: row.id, src: m[2].trim(), width: 0, height: 0, pct: 0 });
+            }
+        }
+        if (imgBlocks.length === 0) {
+            showMessage("当前文档没有找到可识别的图片");
+            return;
+        }
+
+        const dlg = this.newDialog(
+            "图片宽度",
+            `<div class="b3-dialog__content">
+  <div class="fn__block">共找到 <b>${imgBlocks.length}</b> 张图片</div>
+  <div class="fn__block">
+    <label class="fn__block b3-label">模式</label>
+    <label class="fn__block"><input type="radio" name="syassMode" value="auto" checked> 自动（横图 85% / 竖图 50%）</label>
+    <label class="fn__block"><input type="radio" name="syassMode" value="custom"> 自定义百分比</label>
+    <input id="syassPct" type="number" min="1" max="100" value="85" class="b3-text-field fn__block" style="display:none" placeholder="百分比，如 85">
+  </div>
+  <div class="fn__block">
+    <div class="syass__imglist" id="syassImgList"></div>
+  </div>
+</div>
+<div class="b3-dialog__action">
+  <button class="b3-button b3-button--cancel" id="syassCancel">取消</button>
+  <span class="fn__space"></span>
+  <button class="b3-button b3-button--text" id="syassGo">应用</button>
+</div>`,
+            "620px"
+        );
+
+        const listEl = dlg.element.querySelector("#syassImgList") as HTMLDivElement;
+        const pctInput = dlg.element.querySelector("#syassPct") as HTMLInputElement;
+        const radios = dlg.element.querySelectorAll('input[name="syassMode"]');
+        for (const radio of Array.from(radios)) {
+            radio.addEventListener("change", () => {
+                pctInput.style.display = (radio as HTMLInputElement).value === "custom" ? "" : "none";
+            });
+        }
+
+        // 渲染列表 + 测量宽高（自动模式需要）
+        for (const info of imgBlocks) {
+            const item = document.createElement("div");
+            item.className = "syass__imgitem";
+            item.innerHTML = `<span class="syass__imgname">${SiYuanAssistant.escapeHtml(info.src)}</span><span class="syass__imgdim">测量中…</span>`;
+            listEl.appendChild(item);
+            const dimEl = item.querySelector(".syass__imgdim") as HTMLSpanElement;
+            const img = new Image();
+            img.onload = () => {
+                info.width = img.naturalWidth;
+                info.height = img.naturalHeight;
+                info.pct = info.width >= info.height ? 85 : 50;
+                dimEl.textContent = `${info.width}×${info.height} → ${info.pct}%`;
+            };
+            img.onerror = () => {
+                info.pct = 85;
+                dimEl.textContent = "尺寸未知 → 85%";
+            };
+            img.src = assetUrl(info.src);
+        }
+
+        dlg.element.querySelector("#syassCancel").addEventListener("click", () => dlg.destroy());
+        dlg.element.querySelector("#syassGo").addEventListener("click", async () => {
+            const mode = (dlg.element.querySelector('input[name="syassMode"]:checked') as HTMLInputElement).value;
+            const custom = parseInt(pctInput.value, 10);
+            const goBtn = dlg.element.querySelector("#syassGo") as HTMLButtonElement;
+            goBtn.disabled = true;
+            goBtn.textContent = "应用中…";
+            let ok = 0;
+            for (const info of imgBlocks) {
+                const pct = mode === "custom" ? Math.min(100, Math.max(1, custom || 85)) : info.pct || 85;
+                try {
+                    await api("/api/attr/setBlockAttrs", {
+                        id: info.id,
+                        attrs: { "custom-data-width-percent": `${pct}%` },
+                    });
+                    ok++;
+                } catch (e) {
+                    console.warn("设置宽度失败:", info.id, e);
+                }
+            }
+            showMessage(`图片宽度设置完成：${ok}/${imgBlocks.length}`);
+            dlg.destroy();
+        });
+    }
+
+    private static escapeHtml(s: string): string {
+        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    // ================================================================
+    // 功能 4：节级导出（切片 → markdown 复制）
+    // ================================================================
+
+    private async openSectionExportDialog() {
+        let docId = "";
+        try {
+            docId = this.currentDocId();
+        } catch (e) {
+            showMessage((e as Error).message);
+            return;
+        }
+        let content = "";
+        try {
+            const resp = await api("/api/filetree/getDoc", { id: docId });
+            content = resp.data.content || "";
+        } catch (e) {
+            showMessage(`读取文档失败: ${(e as Error).message}`);
+            return;
+        }
+        const wrap = document.createElement("div");
+        wrap.innerHTML = content;
+        const headings: HeadingInfo[] = [];
+        for (const el of Array.from(wrap.querySelectorAll<HTMLElement>("div[data-node-index]"))) {
+            if (el.dataset.type !== "NodeHeading") {
+                continue;
+            }
+            const idx = parseInt(el.dataset.nodeIndex || "0", 10);
+            const subtype = el.dataset.subtype || "";
+            const level = /^h([1-6])$/.exec(subtype) ? parseInt(RegExp.$1, 10) : 0;
+            const text = ((el as HTMLElement).innerText || "").replace(/\s+/g, " ").trim().slice(0, 40);
+            if (level > 0) {
+                headings.push({ idx, level, text });
+            }
+        }
+        if (headings.length === 0) {
+            showMessage("当前文档没有标题，无法按节导出");
+            return;
+        }
+
+        const opts = headings
+            .map((h) => `<option value="${h.idx}">H${h.level} · ${SiYuanAssistant.escapeHtml(h.text)}</option>`)
+            .join("");
+        const dlg = this.newDialog(
+            "节级导出",
+            `<div class="b3-dialog__content">
+  <div class="fn__block">
+    <label class="fn__block b3-label">起始节</label>
+    <select id="syassFrom" class="b3-select fn__block">${opts}</select>
+  </div>
+  <div class="fn__block">
+    <label class="fn__block b3-label">结束节（含）</label>
+    <select id="syassTo" class="b3-select fn__block">${opts}</select>
+  </div>
+  <div class="fn__block">
+    <label class="fn__block"><input type="checkbox" id="syassSkipCallout" checked> 跳过提示块（callout / 引用标注）</label>
+  </div>
+</div>
+<div class="b3-dialog__action">
+  <button class="b3-button b3-button--cancel" id="syassCancel">取消</button>
+  <span class="fn__space"></span>
+  <button class="b3-button b3-button--text" id="syassGo">复制 Markdown</button>
+</div>`,
+            "620px"
+        );
+        const fromSel = dlg.element.querySelector("#syassFrom") as HTMLSelectElement;
+        const toSel = dlg.element.querySelector("#syassTo") as HTMLSelectElement;
+        toSel.selectedIndex = Math.min(headings.length - 1, 4);
+        const skipCallout = dlg.element.querySelector("#syassSkipCallout") as HTMLInputElement;
+
+        dlg.element.querySelector("#syassCancel").addEventListener("click", () => dlg.destroy());
+        dlg.element.querySelector("#syassGo").addEventListener("click", async () => {
+            const start = parseInt(fromSel.value, 10);
+            const end = parseInt(toSel.value, 10);
+            const md = this.sliceAndConvert(content, start, end, skipCallout.checked);
+            if (!md.trim()) {
+                showMessage("切片结果为空");
+                return;
+            }
+            const ok = await copyText(md);
+            showMessage(ok ? `已复制 ${md.length} 字符到剪贴板` : "复制失败，请手动复制");
+            dlg.destroy();
+        });
+    }
+
+    /** 按 node-index 范围切片 HTML，并转 markdown */
+    private sliceAndConvert(content: string, start: number, end: number, skipCallout: boolean): string {
+        const wrap = document.createElement("div");
+        wrap.innerHTML = content;
+        const all = Array.from(wrap.querySelectorAll<HTMLElement>("div[data-node-index]"));
+        const keepIds = new Set<string>();
+        for (const el of all) {
+            const idx = parseInt(el.dataset.nodeIndex || "0", 10);
+            if (idx >= start && idx <= end) {
+                keepIds.add(el.dataset.nodeId || "");
+            }
+        }
+        // 从最深到最浅删除，避免父先删子无谓遍历
+        const toRemove = all
+            .filter((el) => !keepIds.has(el.dataset.nodeId || ""))
+            .sort((a, b) => b.querySelectorAll("div[data-node-index]").length - a.querySelectorAll("div[data-node-index]").length);
+        for (const el of toRemove) {
+            if (el.parentElement) {
+                el.parentElement.removeChild(el);
+            }
+        }
+        const lines: string[] = [];
+        this.nodeToMd(wrap, lines, 0, skipCallout);
+        return lines.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
+    }
+
+    private nodeToMd(el: Element, lines: string[], depth: number, skipCallout: boolean): void {
+        for (const child of Array.from(el.childNodes)) {
+            if (child.nodeType === 3) {
+                continue; // 结构文本节点忽略
+            }
+            if (child.nodeType !== 1) {
+                continue;
+            }
+            const node = child as Element;
+            const tag = (node.localName || "").toLowerCase();
+            const dataType = node.getAttribute("data-type") || "";
+            if (dataType === "NodeHeading") {
+                const subtype = node.getAttribute("data-subtype") || "";
+                const m = /^h([1-6])$/.exec(subtype);
+                const level = m ? parseInt(m[1], 10) : 2;
+                const text = this.inlineToMd(node).trim();
+                if (text) {
+                    lines.push(`${"#".repeat(level)} ${text.replace(/\*\*/g, "")}`);
+                }
+            } else if (dataType === "NodeParagraph") {
+                const md = this.inlineToMd(node).trim();
+                if (md) {
+                    lines.push(md);
+                }
+            } else if (dataType === "NodeTable") {
+                const md = this.tableElToMd(node);
+                if (md) {
+                    lines.push(md);
+                }
+            } else if (dataType === "NodeList" || dataType === "NodeListItem") {
+                this.listElToMd(node, lines, depth, skipCallout);
+            } else if (dataType === "NodeCodeBlock") {
+                const code = ((node as HTMLElement).innerText || "").replace(/\n+$/, "");
+                lines.push("```", code, "```");
+            } else if (dataType === "NodeMathBlock") {
+                lines.push("$$", ((node as HTMLElement).innerText || "").trim(), "$$");
+            } else if (dataType === "NodeBlockquote") {
+                const md = this.inlineToMd(node).trim();
+                if (md) {
+                    lines.push(md.split("\n").map((l) => `> ${l}`).join("\n"));
+                }
+            } else if (dataType === "NodeCallout") {
+                if (!skipCallout) {
+                    const md = this.inlineToMd(node).trim();
+                    if (md) {
+                        lines.push(md.split("\n").map((l) => `> ${l}`).join("\n"));
+                    }
+                }
+            } else if (dataType === "NodeThematicBreak") {
+                lines.push("---");
+            } else if (dataType === "NodeImage") {
+                const img = node.querySelector("img");
+                if (img) {
+                    const src = img.getAttribute("data-src") || img.getAttribute("src") || "";
+                    const alt = img.getAttribute("alt") || "";
+                    if (src) {
+                        lines.push(`![${alt}](${src})`);
+                    }
+                }
+            } else if (dataType === "NodeHTMLBlock") {
+                const md = this.inlineToMd(node).trim();
+                if (md) {
+                    lines.push(md);
+                }
+            } else if (tag === "img") {
+                const src = node.getAttribute("data-src") || node.getAttribute("src") || "";
+                if (src) {
+                    lines.push(`![${node.getAttribute("alt") || ""}](${src})`);
+                }
+            } else {
+                this.nodeToMd(node, lines, depth, skipCallout);
+            }
+        }
+    }
+
+    /** 块内联内容 → markdown（strong/em/code/u/a/img） */
+    private inlineToMd(el: Element): string {
+        let out = "";
+        for (const child of Array.from(el.childNodes)) {
+            if (child.nodeType === 3) {
+                out += child.textContent || "";
+                continue;
+            }
+            if (child.nodeType !== 1) {
+                continue;
+            }
+            const node = child as Element;
+            const tag = (node.localName || "").toLowerCase();
+            const dataType = node.getAttribute("data-type") || "";
+            if (tag === "span" && dataType.includes("strong")) {
+                out += `**${this.inlineToMd(node)}**`;
+            } else if (tag === "span" && dataType.includes("em")) {
+                out += `*${this.inlineToMd(node)}*`;
+            } else if (tag === "span" && dataType.includes("code")) {
+                out += `\`${this.inlineToMd(node)}\``;
+            } else if (tag === "span" && dataType.includes("u")) {
+                out += this.inlineToMd(node);
+            } else if (tag === "a") {
+                const href = node.getAttribute("data-href") || node.getAttribute("href") || "";
+                const text = this.inlineToMd(node);
+                out += href && !href.startsWith("siyuan://") ? `[${text}](${href})` : text;
+            } else if (tag === "img") {
+                const src = node.getAttribute("data-src") || node.getAttribute("src") || "";
+                if (src) {
+                    out += `![${node.getAttribute("alt") || ""}](${src})`;
+                }
+            } else if (tag === "br") {
+                out += "\n";
+            } else {
+                out += this.inlineToMd(node);
+            }
+        }
+        return out.replace(/\s+/g, " ").trim();
+    }
+
+    /** 思源表格 HTML → markdown 表格 */
+    private tableElToMd(table: Element): string {
+        const rows: string[][] = [];
+        for (const tr of Array.from(table.querySelectorAll("tr"))) {
+            const cells: string[] = [];
+            for (const td of Array.from(tr.querySelectorAll("th, td"))) {
+                let text = ((td as HTMLElement).innerText || "").replace(/\s*\n+\s*/g, " ").trim();
+                text = SiYuanAssistant.escPipe(text);
+                cells.push(text);
+            }
+            if (cells.some((c) => c !== "")) {
+                rows.push(cells);
+            }
+        }
+        if (rows.length === 0) {
+            return "";
+        }
+        const nCols = Math.max(...rows.map((r) => r.length));
+        const out = rows.map((r) => {
+            while (r.length < nCols) {
+                r.push("");
+            }
+            return `|${r.join("|")}|`;
+        });
+        out.splice(1, 0, `|${Array(nCols).fill("---").join("|")}|`);
+        return out.join("\n");
+    }
+
+    /** 列表 → markdown 列表（简单单层） */
+    private listElToMd(el: Element, lines: string[], depth: number, skipCallout: boolean): void {
+        const items = Array.from(el.querySelectorAll(":scope > div[data-type='NodeListItem'], :scope > li"));
+        if (items.length === 0) {
+            this.nodeToMd(el, lines, depth, skipCallout);
+            return;
+        }
+        for (const item of items) {
+            const itemEl = item as HTMLElement;
+            const md = this.inlineToMd(itemEl).trim();
+            const indent = "  ".repeat(Math.min(depth, 6));
+            if (md) {
+                lines.push(`${indent}- ${md}`);
+            }
+            this.nodeToMd(itemEl, lines, depth + 1, skipCallout);
+        }
     }
 }
