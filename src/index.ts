@@ -301,17 +301,18 @@ export default class SiYuanAssistant extends Plugin {
             body = body.replace(re, "");
             body = body.trim();
         }
+        // ⚠️ 实测（v3.6.4）：renameDoc 返回 code=0 但静默不生效；
+        // 正确姿势 = 标题放 createDocWithMd 的 path 末段（skill create-document.js 同款）
+        const safeTitle = title.replace(/\//g, "／").trim();
         const resp = await api("/api/filetree/createDocWithMd", {
             notebook,
-            path: "",
+            path: `/${safeTitle}`,
             markdown: body,
         });
         const docId = resp.data as string;
         if (!docId) {
             throw new Error("createDocWithMd 未返回文档 ID");
         }
-        // 设置文档标题（标题与正文 H1 独立）
-        await api("/api/filetree/renameDoc", { id: docId, title });
         return docId;
     }
 
@@ -319,13 +320,16 @@ export default class SiYuanAssistant extends Plugin {
         return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     }
 
-    /** 段落 → markdown 行（含内联格式与图片占位符） */
+    /** 上传图片到思源 assets，返回 assets 相对路径 */
     private async uploadImage(blob: Blob, name: string, dir: string): Promise<string> {
         const token = window.localStorage.getItem("token") || "";
         const fd = new FormData();
         fd.append("assetsDirPath", dir);
         fd.append("file[]", blob, name);
-        const paths = ["/api/upload", "/api/asset/upload", "/api/upload2"];
+        // 实测（v3.6.4）：/api/upload 404 不存在；正确端点是 /api/asset/upload，
+        // 响应为 data.succMap = { 原文件名: "assets/.../改名.png" }
+        // 旧版本兼容保留 /api/upload + data[0].url 分支
+        const paths = ["/api/asset/upload", "/api/upload"];
         for (const path of paths) {
             try {
                 const resp = await fetch(path, {
@@ -334,8 +338,13 @@ export default class SiYuanAssistant extends Plugin {
                     body: fd,
                 });
                 const json: any = await resp.json().catch((): null => null);
-                if (json && json.code === 0 && json.data && json.data[0] && json.data[0].url) {
-                    return json.data[0].url as string;
+                if (json && json.code === 0) {
+                    if (json.data && json.data.succMap && json.data.succMap[name]) {
+                        return json.data.succMap[name] as string;
+                    }
+                    if (json.data && json.data[0] && json.data[0].url) {
+                        return json.data[0].url as string;
+                    }
                 }
             } catch (e) {
                 // 继续尝试下一个端点

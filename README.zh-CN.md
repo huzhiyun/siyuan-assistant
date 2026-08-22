@@ -39,6 +39,8 @@ npm run build
 ## 已知限制
 
 - 目标版本：思源 v3.6.4+（`minAppVersion: 3.6.4`）
+- 文档标题通过 `createDocWithMd` 的 `path` 参数设置（v3.6.4 实测 `renameDoc` 返回 code=0 但静默不生效，已弃用）
+- 图片上传使用 `/api/asset/upload`（v3.6.4 实测 `/api/upload` 返回 404），响应按 `data.succMap` 解析，兼容旧版 `data[0].url` 格式
 - DOCX 标题层级按 Word 样式名映射（Heading1-9 / 标题1-9 / Title）；Word 自动编号不解析为文本
 - 段内换行（`<w:br/>`）转为段落内换行，导入后可能呈现为多行段落
 - 下划线、删除线不映射为 Markdown（Lute 不支持标准下划线语法）

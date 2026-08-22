@@ -28,6 +28,8 @@ npm run build
 ## Known limitations
 
 - Target: SiYuan v3.6.4+ (`minAppVersion: 3.6.4`)
+- Doc title is set via the `path` parameter of `createDocWithMd` (verified on v3.6.4: `renameDoc` returns code=0 but silently does nothing, so it is not used)
+- Image upload uses `/api/asset/upload` (verified on v3.6.4: `/api/upload` returns 404), parsing `data.succMap`, with fallback to legacy `data[0].url` format
 - DOCX heading level mapped from Word style names (Heading1-9 / 标题1-9 / Title); Word auto-numbering is not extracted as text
 - Line breaks (`<w:br/>`) become paragraph line breaks after import
 - Underline / strikethrough not mapped to Markdown
