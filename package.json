@@ -1,12 +1,12 @@
 {
   "name": "siyuan-assistant",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "SiYuan Assistant plugin: DOCX import, heading flatten, image width, section export",
   "main": "src/index.ts",
   "scripts": {
     "build": "webpack --config webpack.config.js --mode production",
     "dev": "webpack --config webpack.config.js --mode development",
-    "test": "esbuild src/docx.ts --bundle --format=cjs --outfile=/tmp/syass_docx.cjs --log-level=error && node test/parse.test.mjs",
+    "test": "esbuild src/docx.ts --bundle --format=cjs --outfile=/tmp/syass_docx.cjs --log-level=error && esbuild src/blocks.ts --bundle --format=cjs --outfile=/tmp/syass_blocks.cjs --log-level=error && esbuild src/docxgen.ts --bundle --format=cjs --outfile=/tmp/syass_docxgen.cjs --log-level=error && node test/parse.test.mjs && node test/blocks.test.mjs && node test/docxgen.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [],
@@ -17,6 +17,7 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
+    "docx": "^9.7.1",
     "jszip": "^3.10.1"
   },
   "devDependencies": {

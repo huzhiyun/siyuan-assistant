@@ -1,12 +1,13 @@
 /*
  * SiYuan Assistant (思源助手)
- * v0.1.0 — 前端插件，minAppVersion 3.6.4
+ * v0.2.0 — 前端插件，minAppVersion 3.6.4
  *
  * 功能：
- *  1. DOCX 导入（JSZip 解析 → 图片上传 → createDocWithMd → renameDoc 设标题）
- *  2. 标题扁平化（当前文档 H2~H6 全部降级为 H5，H1 不动）
- *  3. 图片宽度设置（setBlockAttrs custom-data-width-percent，自动横85%/竖50%）
- *  4. 节级导出（getDoc HTML 按 data-node-index 切片 → markdown 复制）
+ *  1. DOCX 导入（JSZip 解析 → 图片上传 → createDocWithMd，标题走 path 参数）
+ *  2. 导出 Word（getDoc HTML → 中间块 → docx 库生成 → 浏览器下载）
+ *  3. 标题扁平化（当前文档 H2~H6 全部降级为 H5，H1 不动）
+ *  4. 图片宽度设置（setBlockAttrs custom-data-width-percent，自动横85%/竖50%）
+ *  5. 节级导出（getDoc HTML 按 data-node-index 切片 → markdown 复制）
  */
 import {
     Plugin,
@@ -18,6 +19,8 @@ import {
     getFrontend,
 } from "siyuan";
 import { parseDocx } from "./docx";
+import { parseHtml, sliceElement, htmlToBlocks, mdFromBlocks } from "./blocks";
+import { blocksToDocument, documentToBlob, type ImageData } from "./docxgen";
 import "./index.scss";
 
 // ---------- WordprocessingML 命名空间 ----------
@@ -116,6 +119,13 @@ export default class SiYuanAssistant extends Plugin {
             },
         });
         this.addCommand({
+            langKey: "cmdDocxExport",
+            hotkey: "⇧⌘D",
+            callback: () => {
+                this.openDocxExportDialog();
+            },
+        });
+        this.addCommand({
             langKey: "cmdSection",
             hotkey: "⇧⌘L",
             callback: () => {
@@ -136,6 +146,13 @@ export default class SiYuanAssistant extends Plugin {
                     label: "DOCX 导入…",
                     click: () => {
                         this.openDocxImportDialog();
+                    },
+                });
+                menu.addItem({
+                    icon: "iconSyassSection",
+                    label: "导出 Word…",
+                    click: () => {
+                        this.openDocxExportDialog();
                     },
                 });
                 menu.addItem({
@@ -193,10 +210,6 @@ export default class SiYuanAssistant extends Plugin {
             content,
             width: this.isMobile ? "92vw" : width || "560px",
         });
-    }
-
-    private static escPipe(s: string): string {
-        return s.replace(/\|/g, "\\|");
     }
 
     /** 取块 markdown 的标题级别（# 数量），非标题返回 0 */
@@ -559,8 +572,7 @@ export default class SiYuanAssistant extends Plugin {
             showMessage(`读取文档失败: ${(e as Error).message}`);
             return;
         }
-        const wrap = document.createElement("div");
-        wrap.innerHTML = content;
+        const wrap = parseHtml(content);
         const headings: HeadingInfo[] = [];
         for (const el of Array.from(wrap.querySelectorAll<HTMLElement>("div[data-node-index]"))) {
             if (el.dataset.type !== "NodeHeading") {
@@ -613,7 +625,10 @@ export default class SiYuanAssistant extends Plugin {
         dlg.element.querySelector("#syassGo").addEventListener("click", async () => {
             const start = parseInt(fromSel.value, 10);
             const end = parseInt(toSel.value, 10);
-            const md = this.sliceAndConvert(content, start, end, skipCallout.checked);
+            const root = parseHtml(content);
+            sliceElement(root, start, end);
+            const blocks = htmlToBlocks(root, skipCallout.checked);
+            const md = mdFromBlocks(blocks);
             if (!md.trim()) {
                 showMessage("切片结果为空");
                 return;
@@ -624,190 +639,172 @@ export default class SiYuanAssistant extends Plugin {
         });
     }
 
-    /** 按 node-index 范围切片 HTML，并转 markdown */
-    private sliceAndConvert(content: string, start: number, end: number, skipCallout: boolean): string {
-        const wrap = document.createElement("div");
-        wrap.innerHTML = content;
-        const all = Array.from(wrap.querySelectorAll<HTMLElement>("div[data-node-index]"));
-        const keepIds = new Set<string>();
-        for (const el of all) {
-            const idx = parseInt(el.dataset.nodeIndex || "0", 10);
-            if (idx >= start && idx <= end) {
-                keepIds.add(el.dataset.nodeId || "");
-            }
-        }
-        // 从最深到最浅删除，避免父先删子无谓遍历
-        const toRemove = all
-            .filter((el) => !keepIds.has(el.dataset.nodeId || ""))
-            .sort((a, b) => b.querySelectorAll("div[data-node-index]").length - a.querySelectorAll("div[data-node-index]").length);
-        for (const el of toRemove) {
-            if (el.parentElement) {
-                el.parentElement.removeChild(el);
-            }
-        }
-        const lines: string[] = [];
-        this.nodeToMd(wrap, lines, 0, skipCallout);
-        return lines.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
-    }
+    // ================================================================
+    // 功能 2：导出 Word（docx 库，浏览器生成下载）
+    // ================================================================
 
-    private nodeToMd(el: Element, lines: string[], depth: number, skipCallout: boolean): void {
-        for (const child of Array.from(el.childNodes)) {
-            if (child.nodeType === 3) {
-                continue; // 结构文本节点忽略
-            }
-            if (child.nodeType !== 1) {
-                continue;
-            }
-            const node = child as Element;
-            const tag = (node.localName || "").toLowerCase();
-            const dataType = node.getAttribute("data-type") || "";
-            if (dataType === "NodeHeading") {
-                const subtype = node.getAttribute("data-subtype") || "";
-                const m = /^h([1-6])$/.exec(subtype);
-                const level = m ? parseInt(m[1], 10) : 2;
-                const text = this.inlineToMd(node).trim();
-                if (text) {
-                    lines.push(`${"#".repeat(level)} ${text.replace(/\*\*/g, "")}`);
-                }
-            } else if (dataType === "NodeParagraph") {
-                const md = this.inlineToMd(node).trim();
-                if (md) {
-                    lines.push(md);
-                }
-            } else if (dataType === "NodeTable") {
-                const md = this.tableElToMd(node);
-                if (md) {
-                    lines.push(md);
-                }
-            } else if (dataType === "NodeList" || dataType === "NodeListItem") {
-                this.listElToMd(node, lines, depth, skipCallout);
-            } else if (dataType === "NodeCodeBlock") {
-                const code = ((node as HTMLElement).innerText || "").replace(/\n+$/, "");
-                lines.push("```", code, "```");
-            } else if (dataType === "NodeMathBlock") {
-                lines.push("$$", ((node as HTMLElement).innerText || "").trim(), "$$");
-            } else if (dataType === "NodeBlockquote") {
-                const md = this.inlineToMd(node).trim();
-                if (md) {
-                    lines.push(md.split("\n").map((l) => `> ${l}`).join("\n"));
-                }
-            } else if (dataType === "NodeCallout") {
-                if (!skipCallout) {
-                    const md = this.inlineToMd(node).trim();
-                    if (md) {
-                        lines.push(md.split("\n").map((l) => `> ${l}`).join("\n"));
-                    }
-                }
-            } else if (dataType === "NodeThematicBreak") {
-                lines.push("---");
-            } else if (dataType === "NodeImage") {
-                const img = node.querySelector("img");
-                if (img) {
-                    const src = img.getAttribute("data-src") || img.getAttribute("src") || "";
-                    const alt = img.getAttribute("alt") || "";
-                    if (src) {
-                        lines.push(`![${alt}](${src})`);
-                    }
-                }
-            } else if (dataType === "NodeHTMLBlock") {
-                const md = this.inlineToMd(node).trim();
-                if (md) {
-                    lines.push(md);
-                }
-            } else if (tag === "img") {
-                const src = node.getAttribute("data-src") || node.getAttribute("src") || "";
-                if (src) {
-                    lines.push(`![${node.getAttribute("alt") || ""}](${src})`);
-                }
-            } else {
-                this.nodeToMd(node, lines, depth, skipCallout);
-            }
-        }
-    }
-
-    /** 块内联内容 → markdown（strong/em/code/u/a/img） */
-    private inlineToMd(el: Element): string {
-        let out = "";
-        for (const child of Array.from(el.childNodes)) {
-            if (child.nodeType === 3) {
-                out += child.textContent || "";
-                continue;
-            }
-            if (child.nodeType !== 1) {
-                continue;
-            }
-            const node = child as Element;
-            const tag = (node.localName || "").toLowerCase();
-            const dataType = node.getAttribute("data-type") || "";
-            if (tag === "span" && dataType.includes("strong")) {
-                out += `**${this.inlineToMd(node)}**`;
-            } else if (tag === "span" && dataType.includes("em")) {
-                out += `*${this.inlineToMd(node)}*`;
-            } else if (tag === "span" && dataType.includes("code")) {
-                out += `\`${this.inlineToMd(node)}\``;
-            } else if (tag === "span" && dataType.includes("u")) {
-                out += this.inlineToMd(node);
-            } else if (tag === "a") {
-                const href = node.getAttribute("data-href") || node.getAttribute("href") || "";
-                const text = this.inlineToMd(node);
-                out += href && !href.startsWith("siyuan://") ? `[${text}](${href})` : text;
-            } else if (tag === "img") {
-                const src = node.getAttribute("data-src") || node.getAttribute("src") || "";
-                if (src) {
-                    out += `![${node.getAttribute("alt") || ""}](${src})`;
-                }
-            } else if (tag === "br") {
-                out += "\n";
-            } else {
-                out += this.inlineToMd(node);
-            }
-        }
-        return out.replace(/\s+/g, " ").trim();
-    }
-
-    /** 思源表格 HTML → markdown 表格 */
-    private tableElToMd(table: Element): string {
-        const rows: string[][] = [];
-        for (const tr of Array.from(table.querySelectorAll("tr"))) {
-            const cells: string[] = [];
-            for (const td of Array.from(tr.querySelectorAll("th, td"))) {
-                let text = ((td as HTMLElement).innerText || "").replace(/\s*\n+\s*/g, " ").trim();
-                text = SiYuanAssistant.escPipe(text);
-                cells.push(text);
-            }
-            if (cells.some((c) => c !== "")) {
-                rows.push(cells);
-            }
-        }
-        if (rows.length === 0) {
-            return "";
-        }
-        const nCols = Math.max(...rows.map((r) => r.length));
-        const out = rows.map((r) => {
-            while (r.length < nCols) {
-                r.push("");
-            }
-            return `|${r.join("|")}|`;
-        });
-        out.splice(1, 0, `|${Array(nCols).fill("---").join("|")}|`);
-        return out.join("\n");
-    }
-
-    /** 列表 → markdown 列表（简单单层） */
-    private listElToMd(el: Element, lines: string[], depth: number, skipCallout: boolean): void {
-        const items = Array.from(el.querySelectorAll(":scope > div[data-type='NodeListItem'], :scope > li"));
-        if (items.length === 0) {
-            this.nodeToMd(el, lines, depth, skipCallout);
+    private async openDocxExportDialog() {
+        let docId = "";
+        try {
+            docId = this.currentDocId();
+        } catch (e) {
+            showMessage((e as Error).message);
             return;
         }
-        for (const item of items) {
-            const itemEl = item as HTMLElement;
-            const md = this.inlineToMd(itemEl).trim();
-            const indent = "  ".repeat(Math.min(depth, 6));
-            if (md) {
-                lines.push(`${indent}- ${md}`);
+        let content = "";
+        try {
+            const resp = await api("/api/filetree/getDoc", { id: docId });
+            content = resp.data.content || "";
+        } catch (e) {
+            showMessage(`读取文档失败: ${(e as Error).message}`);
+            return;
+        }
+        const root = parseHtml(content);
+        const headings: HeadingInfo[] = [];
+        for (const el of Array.from(root.querySelectorAll<HTMLElement>("div[data-node-index]"))) {
+            if (el.dataset.type !== "NodeHeading") {
+                continue;
             }
-            this.nodeToMd(itemEl, lines, depth + 1, skipCallout);
+            const idx = parseInt(el.dataset.nodeIndex || "0", 10);
+            const subtype = el.dataset.subtype || "";
+            const level = /^h([1-6])$/.exec(subtype) ? parseInt(RegExp.$1, 10) : 0;
+            const text = ((el as HTMLElement).innerText || "").replace(/\s+/g, " ").trim().slice(0, 40);
+            if (level > 0) {
+                headings.push({ idx, level, text });
+            }
+        }
+        const hasHeadings = headings.length > 0;
+        const opts = headings
+            .map((h) => `<option value="${h.idx}">H${h.level} · ${SiYuanAssistant.escapeHtml(h.text)}</option>`)
+            .join("");
+
+        const dlg = this.newDialog(
+            "导出 Word",
+            `<div class="b3-dialog__content">
+  <div class="fn__block">
+    <label class="fn__block b3-label">导出范围</label>
+    <label class="fn__block"><input type="radio" name="syassRange" value="all" checked> 全文</label>
+    <label class="fn__block"><input type="radio" name="syassRange" value="section" ${hasHeadings ? "" : "disabled"}> 当前节${hasHeadings ? "" : "（文档无标题）"}</label>
+  </div>
+  <div class="fn__block" id="syassSectionBlock" style="display:none">
+    <label class="fn__block b3-label">起始节</label>
+    <select id="syassFrom" class="b3-select fn__block">${opts}</select>
+    <label class="fn__block b3-label">结束节（含）</label>
+    <select id="syassTo" class="b3-select fn__block">${opts}</select>
+  </div>
+  <div class="fn__block">
+    <label class="fn__block"><input type="checkbox" id="syassSkipCallout" checked> 跳过提示块（callout / 引用标注，投标终稿用）</label>
+    <label class="fn__block"><input type="checkbox" id="syassAutoNum" checked> Word 原生多级编号（1. / 1.1 / 1.1.1）</label>
+  </div>
+</div>
+<div class="b3-dialog__action">
+  <button class="b3-button b3-button--cancel" id="syassCancel">取消</button>
+  <span class="fn__space"></span>
+  <button class="b3-button b3-button--text" id="syassGo">导出并下载</button>
+</div>`,
+            "620px"
+        );
+        const rangeRadios = dlg.element.querySelectorAll('input[name="syassRange"]');
+        const sectionBlock = dlg.element.querySelector("#syassSectionBlock") as HTMLDivElement;
+        for (const radio of Array.from(rangeRadios)) {
+            radio.addEventListener("change", () => {
+                sectionBlock.style.display = (radio as HTMLInputElement).value === "section" ? "" : "none";
+            });
+        }
+        const fromSel = dlg.element.querySelector("#syassFrom") as HTMLSelectElement;
+        const toSel = dlg.element.querySelector("#syassTo") as HTMLSelectElement;
+        if (toSel) {
+            toSel.selectedIndex = Math.min(headings.length - 1, 4);
+        }
+        const skipCallout = dlg.element.querySelector("#syassSkipCallout") as HTMLInputElement;
+        const autoNum = dlg.element.querySelector("#syassAutoNum") as HTMLInputElement;
+        const goBtn = dlg.element.querySelector("#syassGo") as HTMLButtonElement;
+
+        dlg.element.querySelector("#syassCancel").addEventListener("click", () => dlg.destroy());
+        goBtn.addEventListener("click", async () => {
+            const range = (dlg.element.querySelector('input[name="syassRange"]:checked') as HTMLInputElement).value;
+            goBtn.disabled = true;
+            goBtn.textContent = "生成中…";
+            try {
+                const root2 = parseHtml(content);
+                if (range === "section") {
+                    sliceElement(root2, parseInt(fromSel.value, 10), parseInt(toSel.value, 10));
+                }
+                const blocks = htmlToBlocks(root2, skipCallout.checked);
+                // 下载图片（并发）
+                const images = new Map<string, ImageData>();
+                const imgBlocks = blocks.filter((b) => b.type === "image") as Array<{
+                    type: "image";
+                    src: string;
+                    alt: string;
+                }>;
+                await Promise.all(
+                    imgBlocks.map(async (b) => {
+                        if (images.has(b.src)) {
+                            return;
+                        }
+                        const data = await this.loadImageData(b.src);
+                        if (data) {
+                            images.set(b.src, data);
+                        }
+                    })
+                );
+                // 文件名：hpath 末段
+                let fileName = "导出文档";
+                try {
+                    const hp = await api("/api/filetree/getHPathByID", { id: docId });
+                    const seg = ((hp.data as string) || "").split("/").filter(Boolean);
+                    if (seg.length > 0) {
+                        fileName = seg[seg.length - 1];
+                    }
+                } catch (e) {
+                    // 忽略，用默认名
+                }
+                const doc = blocksToDocument(
+                    { blocks, images },
+                    { autoNumberHeadings: autoNum.checked }
+                );
+                const blob = await documentToBlob(doc);
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `${fileName}.docx`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 3000);
+                showMessage(`已导出 ${fileName}.docx（${blocks.length} 块，${images.size} 张图）`);
+                dlg.destroy();
+            } catch (e) {
+                showMessage(`导出失败: ${(e as Error).message}`);
+                goBtn.disabled = false;
+                goBtn.textContent = "导出并下载";
+            }
+        });
+    }
+
+    /** 下载思源图片并探测尺寸 */
+    private async loadImageData(src: string): Promise<ImageData | null> {
+        try {
+            const resp = await fetch(assetUrl(src));
+            if (!resp.ok) {
+                return null;
+            }
+            const buffer = await resp.arrayBuffer();
+            const blob = new Blob([buffer]);
+            const url = URL.createObjectURL(blob);
+            const dims = await new Promise<{ w: number; h: number }>((resolve) => {
+                const img = new Image();
+                img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+                img.onerror = () => resolve({ w: 0, h: 0 });
+                img.src = url;
+            });
+            URL.revokeObjectURL(url);
+            const ext = (/\.(\w+)$/.exec(src) || [])[1]?.toLowerCase() || "png";
+            const type = ext === "jpg" || ext === "jpeg" ? "jpg" : ext === "gif" ? "gif" : ext === "bmp" ? "bmp" : "png";
+            return { buffer, widthPx: dims.w, heightPx: dims.h, type };
+        } catch (e) {
+            return null;
         }
     }
 }

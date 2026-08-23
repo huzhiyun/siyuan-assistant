@@ -1,5 +1,6 @@
 {
   "cmdDocxImport": "DOCX 导入",
+  "cmdDocxExport": "导出 Word",
   "cmdFlatten": "标题降级为 H5",
   "cmdImgWidth": "图片宽度设置",
   "cmdSection": "节级导出（复制 Markdown）"

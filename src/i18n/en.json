@@ -1,5 +1,6 @@
 {
   "cmdDocxImport": "Import DOCX",
+  "cmdDocxExport": "Export Word",
   "cmdFlatten": "Flatten headings to H5",
   "cmdImgWidth": "Set image width",
   "cmdSection": "Export section (copy Markdown)"
