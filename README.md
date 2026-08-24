@@ -13,9 +13,18 @@ All four features are also available from the top-right "SiYuan Assistant" menu.
 
 ## Install
 
-1. Build or obtain `package.zip`
-2. SiYuan → Settings → Marketplace → manually install (or unzip into `workspace/data/plugins/siyuan-assistant/`)
-3. Enable under "Downloaded"
+A local SiYuan plugin = a folder inside the workspace `data/plugins/` (the marketplace UI has **no** "install local zip" option):
+
+1. Get `siyuan-assistant-v0.2.0.zip` (NAS: `/hermes/输出/`)
+2. On the machine running SiYuan (workspace e.g. `/siyuan/workspace/`):
+   ```bash
+   mkdir -p /siyuan/workspace/data/plugins/siyuan-assistant
+   unzip siyuan-assistant-v0.2.0.zip -d /siyuan/workspace/data/plugins/siyuan-assistant/
+   ```
+   (the zip contains plugin.json/index.js directly; the folder name must equal the `name` field in plugin.json)
+3. Restart SiYuan (or refresh), then Settings → Marketplace → Downloaded → enable "SiYuan Assistant"
+
+Docker: `docker cp siyuan-assistant-v0.2.0.zip siyuan:/siyuan/workspace/` then unzip inside the container.
 
 ## Build
 

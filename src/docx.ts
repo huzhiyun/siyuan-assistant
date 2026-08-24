@@ -25,6 +25,7 @@ interface ImgRef {
 interface DocxResult {
     md: string;
     title: string;
+    uploadFailures: number; // 上传失败被跳过的图片数（0 表示全部成功）
 }
 
 function escPipe(s: string): string {
@@ -265,12 +266,14 @@ function docxTableToMd(tbl: Element, addRef: (rId: string, alt: string) => void)
  * 解析 docx 文件内容
  * @param ab        docx 文件的 ArrayBuffer
  * @param baseName  用于 assets 子目录命名（如文档名去扩展名）
- * @param upload    图片上传回调，返回思源 assets 相对路径
+ * @param upload    图片上传回调，返回思源 assets 相对路径（返回 "" 表示该图失败，跳过不阻塞整体）
+ * @param opts      可选：{ concurrency: 并发上传数（默认 4）; onProgress: (done, total) => void }
  */
 export async function parseDocx(
     ab: ArrayBuffer,
     baseName: string,
-    upload: UploadFn
+    upload: UploadFn,
+    opts?: { concurrency?: number; onProgress?: (done: number, total: number) => void }
 ): Promise<DocxResult> {
     const zip = await JSZip.loadAsync(ab);
     const docXmlFile = zip.file("word/document.xml");
@@ -341,18 +344,40 @@ export async function parseDocx(
 
     const dir = `assets/${baseName}`;
     const urlMap = new Map<string, string>();
-    await Promise.all(
-        mediaRefs.map(async (ref) => {
-            const zf = zip.file(ref.target);
-            if (!zf) {
-                urlMap.set(ref.rId, "");
-                return;
+    // ⚠️ 并发受限上传：全量 Promise.all 会瞬间打出几百个请求（内核/浏览器都扛不住，且单个请求
+    // 挂起会导致 Promise.all 永不 resolve → 按钮永久置灰）。改为固定并发 worker + 单图失败跳过。
+    const concurrency = opts?.concurrency && opts.concurrency > 0 ? opts.concurrency : 4;
+    const total = mediaRefs.length;
+    const onProgress = opts?.onProgress || (() => {});
+    let done = 0;
+    let cursor = 0;
+    let uploadFailures = 0;
+    const workers = Array.from({length: Math.min(concurrency, mediaRefs.length)}, async () => {
+        while (cursor < mediaRefs.length) {
+            const ref = mediaRefs[cursor++];
+            try {
+                const zf = zip.file(ref.target);
+                if (!zf) {
+                    urlMap.set(ref.rId, "");
+                } else {
+                    const blob = await zf.async("blob");
+                    const url = await upload(blob, `image_${ref.rId.replace(/^rId/i, "")}.${ref.ext}`, dir);
+                    if (url) {
+                        urlMap.set(ref.rId, url);
+                    } else {
+                        uploadFailures++;
+                        urlMap.set(ref.rId, "");
+                    }
+                }
+            } catch (e) {
+                uploadFailures++;
+                urlMap.set(ref.rId, ""); // 单图失败不阻塞整体，md 里该图占位符会被替换为空
             }
-            const blob = await zf.async("blob");
-            const url = await upload(blob, `image_${ref.rId.replace(/^rId/i, "")}.${ref.ext}`, dir);
-            urlMap.set(ref.rId, url);
-        })
-    );
+            done++;
+            onProgress(done, total);
+        }
+    });
+    await Promise.all(workers);
 
     let md = blocks.join("\n\n");
     md = md.replace(/%%SYASS_IMG:([^%]+)%%/g, (_: string, rId: string) => {
@@ -364,5 +389,5 @@ export async function parseDocx(
         return `![${ref ? ref.alt : ""}](${url})`;
     });
 
-    return { md, title: firstH1 };
+    return { md, title: firstH1, uploadFailures };
 }

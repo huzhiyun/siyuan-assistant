@@ -43,6 +43,24 @@ function api(path: string, payload: any): Promise<ApiResp> {
     });
 }
 
+/** 带超时的 fetch：超时 abort，避免请求挂起导致界面永久等待 */
+function fetchWithTimeout(url: string, init: RequestInit, ms: number): Promise<Response> {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    return fetch(url, { ...init, signal: ctrl.signal }).finally(() => clearTimeout(timer));
+}
+
+/** 带超时的 api 调用（超时报错，恢复按钮） */
+function apiWithTimeout(path: string, payload: any, ms: number): Promise<ApiResp> {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`API ${path} 超时（${ms / 1000}s）`)), ms);
+        api(path, payload).then(
+            (r) => { clearTimeout(timer); resolve(r); },
+            (e) => { clearTimeout(timer); reject(e); }
+        );
+    });
+}
+
 /** 思源资产访问 URL（渲染进程内可用） */
 function assetUrl(src: string): string {
     const token = window.localStorage.getItem("token") || "";
@@ -281,12 +299,17 @@ export default class SiYuanAssistant extends Plugin {
                 return;
             }
             goBtn.disabled = true;
-            goBtn.textContent = "导入中…";
+            goBtn.textContent = "开始导入";
             try {
                 const title = (titleInput.value || file.name.replace(/\.docx$/i, "")).trim();
-                const parsed = await this.parseDocxFile(file);
+                goBtn.textContent = "正在解析 docx…";
+                const parsed = await this.parseDocxFile(file, (done, total) => {
+                    goBtn.textContent = `正在上传图片 ${done}/${total}…`;
+                });
+                goBtn.textContent = "正在创建文档…";
                 const docId = await this.importDocx(parsed, notebook, title, keepH1.checked);
-                showMessage(`导入成功：${title}（${docId}）`);
+                const warn = parsed.uploadFailures > 0 ? `（${parsed.uploadFailures} 张图片上传失败已跳过）` : "";
+                showMessage(`导入成功：${title}${warn}`);
                 dlg.destroy();
             } catch (e) {
                 showMessage(`导入失败: ${(e as Error).message}`);
@@ -296,10 +319,16 @@ export default class SiYuanAssistant extends Plugin {
         });
     }
 
-    private async parseDocxFile(file: File): Promise<{ md: string; title: string }> {
+    private async parseDocxFile(
+        file: File,
+        onProgress?: (done: number, total: number) => void
+    ): Promise<{ md: string; title: string; uploadFailures: number }> {
         const ab = await file.arrayBuffer();
         const baseName = file.name.replace(/\.docx$/i, "");
-        return parseDocx(ab, baseName, (blob, name, dir) => this.uploadImage(blob, name, dir));
+        return parseDocx(ab, baseName, (blob, name, dir) => this.uploadImage(blob, name, dir), {
+            concurrency: 4,
+            onProgress,
+        });
     }
     private async importDocx(
         parsed: { md: string; title: string },
@@ -317,11 +346,12 @@ export default class SiYuanAssistant extends Plugin {
         // ⚠️ 实测（v3.6.4）：renameDoc 返回 code=0 但静默不生效；
         // 正确姿势 = 标题放 createDocWithMd 的 path 末段（skill create-document.js 同款）
         const safeTitle = title.replace(/\//g, "／").trim();
-        const resp = await api("/api/filetree/createDocWithMd", {
+        // 大文档 markdown 可能几百 KB，内核建块耗时较长，给 5 分钟超时兜底（避免永久等待）
+        const resp = await apiWithTimeout("/api/filetree/createDocWithMd", {
             notebook,
             path: `/${safeTitle}`,
             markdown: body,
-        });
+        }, 300000);
         const docId = resp.data as string;
         if (!docId) {
             throw new Error("createDocWithMd 未返回文档 ID");
@@ -333,7 +363,7 @@ export default class SiYuanAssistant extends Plugin {
         return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     }
 
-    /** 上传图片到思源 assets，返回 assets 相对路径 */
+    /** 上传图片到思源 assets，返回 assets 相对路径；失败重试后仍失败返回 ""（不阻塞整体导入） */
     private async uploadImage(blob: Blob, name: string, dir: string): Promise<string> {
         const token = window.localStorage.getItem("token") || "";
         const fd = new FormData();
@@ -343,27 +373,33 @@ export default class SiYuanAssistant extends Plugin {
         // 响应为 data.succMap = { 原文件名: "assets/.../改名.png" }
         // 旧版本兼容保留 /api/upload + data[0].url 分支
         const paths = ["/api/asset/upload", "/api/upload"];
+        let lastErr: string = "";
         for (const path of paths) {
-            try {
-                const resp = await fetch(path, {
-                    method: "POST",
-                    headers: { Authorization: "Token " + token },
-                    body: fd,
-                });
-                const json: any = await resp.json().catch((): null => null);
-                if (json && json.code === 0) {
-                    if (json.data && json.data.succMap && json.data.succMap[name]) {
-                        return json.data.succMap[name] as string;
+            for (let attempt = 0; attempt < 2; attempt++) {
+                try {
+                    const resp = await fetchWithTimeout(path, {
+                        method: "POST",
+                        headers: { Authorization: "Token " + token },
+                        body: fd,
+                    }, 30000); // 30s 超时，避免请求挂起
+                    const json: any = await resp.json().catch((): null => null);
+                    if (json && json.code === 0) {
+                        if (json.data && json.data.succMap && json.data.succMap[name]) {
+                            return json.data.succMap[name] as string;
+                        }
+                        if (json.data && json.data[0] && json.data[0].url) {
+                            return json.data[0].url as string;
+                        }
                     }
-                    if (json.data && json.data[0] && json.data[0].url) {
-                        return json.data[0].url as string;
-                    }
+                    lastErr = `HTTP ${resp.status}`;
+                } catch (e) {
+                    lastErr = (e as Error).message || String(e);
+                    // 继续尝试（下一次或下一个端点）
                 }
-            } catch (e) {
-                // 继续尝试下一个端点
             }
         }
-        throw new Error(`上传图片失败: ${name}`);
+        console.warn(`上传图片失败（已跳过）: ${name} — ${lastErr}`);
+        return "";
     }
 
     // ================================================================

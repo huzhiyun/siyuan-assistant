@@ -30,9 +30,18 @@
 
 ## 安装
 
-1. 构建或获取 `package.zip`
-2. 思源 → 设置 → 集市 → 手动安装插件（或解压到 `工作空间/data/plugins/siyuan-assistant/`）
-3. 在集市「已下载」中启用
+思源本地插件 = 把插件目录放进工作空间 `data/plugins/`（集市 UI **没有**手动导入 zip 的选项）：
+
+1. 获取 `siyuan-assistant-v0.2.0.zip`（NAS: `/hermes/输出/`）
+2. 在思源所在机器（工作空间如 `/siyuan/workspace/`）执行：
+   ```bash
+   mkdir -p /siyuan/workspace/data/plugins/siyuan-assistant
+   unzip siyuan-assistant-v0.2.0.zip -d /siyuan/workspace/data/plugins/siyuan-assistant/
+   ```
+   （zip 内是 plugin.json/index.js 等直接文件，解压后目录即插件目录，目录名必须等于 plugin.json 的 `name`）
+3. 重启思源（或刷新），打开 设置 → 集市 → 已下载 → 启用「思源助手」
+
+Docker 环境：`docker cp siyuan-assistant-v0.2.0.zip siyuan:/siyuan/workspace/` 后容器内 unzip，或 `docker exec siyuan mkdir -p /siyuan/workspace/data/plugins/siyuan-assistant && docker exec siyuan unzip ...`
 
 ## 构建
 
