@@ -107,7 +107,7 @@ assert("显式 w:val=0 的粗斜体开关必须保持普通文本", md.split("\n
 assert("加粗 **加粗**", md.includes("这是**加粗**和*斜体*文本。"), md.split("\n").find(l => l.includes("加粗")));
 assert("连续加粗 run 合并为一对标记", md.includes("**多个连续加粗项**") && !md.includes("**多个****连续"), md.split("\n").find(l => l.includes("多个")));
 assert("中点项目转换为 Markdown 无序列表", md.includes("- **多个连续加粗项**"), md.split("\n").find(l => l.includes("多个")));
-assert("下划线只还原启用的 w:u", md.includes("<u>带下划线</u>普通文本"), md.split("\n").find(l => l.includes("带下划线")));
+assert("下划线不得使用会污染后续块的 HTML 标记", md.includes("带下划线普通文本") && !md.includes("<u>带下划线</u>"), md.split("\n").find(l => l.includes("带下划线")));
 
 console.log("=== 表格 ===");
 const tblLines = md.split("\n\n").find(b => b.includes("合并单元格A"));

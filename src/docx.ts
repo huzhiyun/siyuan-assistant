@@ -129,9 +129,10 @@ function docxRunsToText(
     const out: Array<{ type: "text" | "img" | "pageBreak"; markdown: string; rId: string }> = [];
     const wrap = (t: string, bold: boolean, italic: boolean, sup: boolean, sub: boolean, underline: boolean): string => {
         let s = t.replace(/\u00a0/g, " ");
-        if (underline) {
-            s = `<u>${s}</u>`;
-        }
+        // SiYuan Lute has an inline-HTML × strong parsing regression for
+        // **<u>…</u>…** which can bold subsequent blocks. Preserve document
+        // correctness until its underline-safe native Markdown path is known.
+        void underline;
         if (bold) {
             s = `**${s}**`;
         }

@@ -380,7 +380,7 @@ export default class SiYuanAssistant extends Plugin {
         // as a failed import.
         for (let attempt = 0; attempt < 10; attempt++) {
             const resp = await api("/api/query/sql", {
-                stmt: `SELECT id, type, markdown FROM blocks WHERE root_id = '${safeDocId}' AND type IN ('p', 't') ORDER BY sort ASC`,
+                stmt: `SELECT id, type, markdown FROM blocks WHERE root_id = '${safeDocId}' AND type IN ('p', 't') ORDER BY sortkey ASC`,
             });
             const blocks = Array.isArray(resp.data) ? resp.data : [];
             imageBlocks = blocks.filter((block: any) => block.type === "p" && /!\[[^\]]*\]\(/.test(block.markdown || ""));
