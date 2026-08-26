@@ -2,7 +2,9 @@
   "name": "siyuan-assistant",
   "author": "狐公子",
   "url": "",
-  "version": "0.3.4",
+  "icon": "icon.png",
+  "preview": "preview.png",
+  "version": "0.3.5",
   "minAppVersion": "3.6.4",
   "frontends": [
     "desktop",

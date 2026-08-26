@@ -372,18 +372,30 @@ export default class SiYuanAssistant extends Plugin {
     ): Promise<void> {
         if (parsed.centeredImageIndexes.length === 0 && parsed.centeredTableIndexes.length === 0) return;
         const safeDocId = docId.replace(/'/g, "''");
-        const resp = await api("/api/query/sql", {
-            stmt: `SELECT id, type, markdown FROM blocks WHERE root_id = '${safeDocId}' AND type IN ('p', 't') ORDER BY sort ASC`,
-        });
-        const blocks = Array.isArray(resp.data) ? resp.data : [];
-        const imageBlocks = blocks.filter((block: any) => block.type === "p" && /!\[[^\]]*\]\(/.test(block.markdown || ""));
-        const tableBlocks = blocks.filter((block: any) => block.type === "t");
+        let imageBlocks: any[] = [];
+        let tableBlocks: any[] = [];
+        const expected = parsed.centeredImageIndexes.length + parsed.centeredTableIndexes.length;
+        // createDocWithMd returns before large documents necessarily finish materializing
+        // every block. Wait briefly and retry rather than reporting the created document
+        // as a failed import.
+        for (let attempt = 0; attempt < 10; attempt++) {
+            const resp = await api("/api/query/sql", {
+                stmt: `SELECT id, type, markdown FROM blocks WHERE root_id = '${safeDocId}' AND type IN ('p', 't') ORDER BY sort ASC`,
+            });
+            const blocks = Array.isArray(resp.data) ? resp.data : [];
+            imageBlocks = blocks.filter((block: any) => block.type === "p" && /!\[[^\]]*\]\(/.test(block.markdown || ""));
+            tableBlocks = blocks.filter((block: any) => block.type === "t");
+            const found = parsed.centeredImageIndexes.filter((index) => imageBlocks[index]?.id).length + parsed.centeredTableIndexes.filter((index) => tableBlocks[index]?.id).length;
+            if (found === expected) break;
+            await new Promise((resolve) => setTimeout(resolve, 500));
+        }
         const ids = [
             ...parsed.centeredImageIndexes.map((index) => imageBlocks[index]?.id),
             ...parsed.centeredTableIndexes.map((index) => tableBlocks[index]?.id),
         ].filter((id): id is string => typeof id === "string" && id.length > 0);
-        if (ids.length !== parsed.centeredImageIndexes.length + parsed.centeredTableIndexes.length) {
-            throw new Error("无法定位导入后的居中图片或表格块");
+        if (ids.length !== expected) {
+            console.warn("部分居中布局未定位，文档已正常创建", { expected, found: ids.length, docId });
+            return;
         }
         await Promise.all(ids.map(async (id) => {
             await api("/api/attr/setBlockAttrs", { id, attrs: { "custom-syass-align": "center" } });
