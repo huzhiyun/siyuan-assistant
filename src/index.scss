@@ -30,3 +30,12 @@
     white-space: nowrap;
     flex-shrink: 0;
 }
+
+/* Persisted DOCX center alignment (set by custom-syass-align). */
+.protyle-wysiwyg [data-node-id][custom-syass-align="center"][data-type="NodeParagraph"] > [contenteditable="true"] {
+    text-align: center;
+}
+
+.protyle-wysiwyg [data-node-id][custom-syass-align="center"][data-type="NodeTable"] > table {
+    margin-inline: auto;
+}

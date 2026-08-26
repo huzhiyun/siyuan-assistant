@@ -13,7 +13,12 @@ const R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const A = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const V = "urn:schemas-microsoft-com:vml";
 
-export type UploadFn = (blob: Blob, name: string, dir: string, rotationDegrees: number) => Promise<string>;
+export interface ImageExtent {
+    widthEmu: number;
+    heightEmu: number;
+}
+
+export type UploadFn = (blob: Blob, name: string, dir: string, rotationDegrees: number, extent?: ImageExtent) => Promise<string>;
 
 interface ImgRef {
     rId: string;
@@ -21,12 +26,15 @@ interface ImgRef {
     target: string; // docx 内部路径，如 word/media/image1.png
     ext: string;
     rotationDegrees: number;
+    extent?: ImageExtent;
 }
 
 interface DocxResult {
     md: string;
     title: string;
     uploadFailures: number; // 上传失败被跳过的图片数（0 表示全部成功）
+    centeredImageIndexes: number[];
+    centeredTableIndexes: number[];
 }
 
 function escPipe(s: string): string {
@@ -91,6 +99,21 @@ function findDrawingRotation(el: Element): number {
     return degrees === 90 || degrees === 180 || degrees === 270 ? degrees : 0;
 }
 
+/** Word stores the rendered image box in wp:extent (EMU). */
+function findDrawingExtent(el: Element): ImageExtent | undefined {
+    const extents = el.getElementsByTagNameNS("http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing", "extent");
+    if (extents.length === 0) return undefined;
+    const widthEmu = parseInt(extents[0].getAttribute("cx") || "", 10);
+    const heightEmu = parseInt(extents[0].getAttribute("cy") || "", 10);
+    return widthEmu > 0 && heightEmu > 0 ? { widthEmu, heightEmu } : undefined;
+}
+
+function isCentered(el: Element, propertyName: "pPr" | "tblPr"): boolean {
+    const props = firstChildNS(el, W, propertyName);
+    const jc = props && firstChildNS(props, W, "jc");
+    return (jc?.getAttributeNS(W, "val") || jc?.getAttribute("w:val") || "").toLowerCase() === "center";
+}
+
 function normalizeInlineMarkdown(s: string): string {
     // Word frequently splits one visually continuous bold span into many runs.
     // Concatenating per-run Markdown yields `**A****B**`, which Lute displays
@@ -101,7 +124,7 @@ function normalizeInlineMarkdown(s: string): string {
 /** 递归提取 run 级内容：文本 / 换行 / 图片引用 */
 function docxRunsToText(
     container: Element,
-    addRef: (rId: string, alt: string, rotationDegrees: number) => void
+    addRef: (rId: string, alt: string, rotationDegrees: number, extent?: ImageExtent) => void
 ): Array<{ type: "text" | "img" | "pageBreak"; markdown: string; rId: string }> {
     const out: Array<{ type: "text" | "img" | "pageBreak"; markdown: string; rId: string }> = [];
     const wrap = (t: string, bold: boolean, italic: boolean, sup: boolean, sub: boolean, underline: boolean): string => {
@@ -175,7 +198,7 @@ function docxRunsToText(
                     if (docPrs.length > 0) {
                         alt = docPrs[0].getAttribute("descr") || docPrs[0].getAttribute("name") || "";
                     }
-                    addRef(blip, alt, findDrawingRotation(child));
+                    addRef(blip, alt, findDrawingRotation(child), findDrawingExtent(child));
                     out.push({ type: "img", markdown: "", rId: blip });
                 }
             } else if (local === "hyperlink") {
@@ -194,7 +217,7 @@ function docxRunsToText(
 /** 段落 → markdown 块（含标题、列表、硬分页、内联格式与图片占位符） */
 function docxParaToMd(
     p: Element,
-    addRef: (rId: string, alt: string, rotationDegrees: number) => void,
+    addRef: (rId: string, alt: string, rotationDegrees: number, extent?: ImageExtent) => void,
     styleLevels: Map<string, number>
 ): { md: string } {
     let level = 0;
@@ -223,6 +246,7 @@ function docxParaToMd(
     const runs = docxRunsToText(p, addRef);
     const lines: string[] = [];
     const imgs: string[] = [];
+    const centered = isCentered(p, "pPr");
     let text = "";
     const flushText = () => {
         const content = normalizeInlineMarkdown(text.trim());
@@ -249,7 +273,7 @@ function docxParaToMd(
     };
     for (const run of runs) {
         if (run.type === "img") {
-            imgs.push(`%%SYASS_IMG:${run.rId}%%`);
+            imgs.push(`%%SYASS_IMG:${run.rId}:${centered ? "center" : ""}%%`);
         } else if (run.type === "pageBreak") {
             flushText();
             lines.push("---");
@@ -263,7 +287,7 @@ function docxParaToMd(
 }
 
 /** 表格 → markdown 表格（gridSpan 补空、vMerge continue 跳过、全空行跳过） */
-function docxTableToMd(tbl: Element, addRef: (rId: string, alt: string, rotationDegrees: number) => void): string {
+function docxTableToMd(tbl: Element, addRef: (rId: string, alt: string, rotationDegrees: number, extent?: ImageExtent) => void): string {
     const rows: string[][] = [];
     const imgs: string[] = [];
     for (const tr of Array.from(tbl.getElementsByTagNameNS(W, "tr"))) {
@@ -303,7 +327,7 @@ function docxTableToMd(tbl: Element, addRef: (rId: string, alt: string, rotation
             let cellText = "";
             for (const run of runs) {
                 if (run.type === "img") {
-                    imgs.push(`%%SYASS_IMG:${run.rId}%%`);
+                    imgs.push(`%%SYASS_IMG:${run.rId}:%%`);
                 } else {
                     cellText += run.markdown;
                 }
@@ -399,7 +423,7 @@ export async function parseDocx(
 
     const mediaRefs: ImgRef[] = [];
     const seenRefs = new Set<string>();
-    const addRef = (rId: string, alt: string, rotationDegrees: number) => {
+    const addRef = (rId: string, alt: string, rotationDegrees: number, extent?: ImageExtent) => {
         if (!rId || seenRefs.has(rId)) {
             return;
         }
@@ -416,6 +440,7 @@ export async function parseDocx(
             target: `word/${target}`,
             ext,
             rotationDegrees,
+            extent,
         });
     };
 
@@ -424,6 +449,8 @@ export async function parseDocx(
         throw new Error("docx 正文为空");
     }
     const blocks: string[] = [];
+    const centeredTableIndexes: number[] = [];
+    let tableIndex = 0;
     let firstH1 = "";
     for (const child of Array.from(body.childNodes)) {
         if (child.nodeType !== 1) {
@@ -442,6 +469,8 @@ export async function parseDocx(
         } else if (local === "tbl") {
             const res = docxTableToMd(el, addRef);
             if (res.trim()) {
+                if (isCentered(el, "tblPr")) centeredTableIndexes.push(tableIndex);
+                tableIndex++;
                 blocks.push(res);
             }
         }
@@ -466,7 +495,7 @@ export async function parseDocx(
                     urlMap.set(ref.rId, "");
                 } else {
                     const blob = await zf.async("blob");
-                    const url = await upload(blob, `image_${ref.rId.replace(/^rId/i, "")}.${ref.ext}`, dir, ref.rotationDegrees);
+                    const url = await upload(blob, `image_${ref.rId.replace(/^rId/i, "")}.${ref.ext}`, dir, ref.rotationDegrees, ref.extent);
                     if (url) {
                         urlMap.set(ref.rId, url);
                     } else {
@@ -485,14 +514,18 @@ export async function parseDocx(
     await Promise.all(workers);
 
     let md = blocks.join("\n\n");
-    md = md.replace(/%%SYASS_IMG:([^%]+)%%/g, (_: string, rId: string) => {
+    const centeredImageIndexes: number[] = [];
+    let imageIndex = 0;
+    md = md.replace(/%%SYASS_IMG:([^:%]+):(center)?%%/g, (_: string, rId: string, centered: string | undefined) => {
         const url = urlMap.get(rId);
         if (!url) {
             return "";
         }
         const ref = mediaRefs.find((m) => m.rId === rId);
+        if (centered) centeredImageIndexes.push(imageIndex);
+        imageIndex++;
         return `![${ref ? ref.alt : ""}](${url})`;
     });
 
-    return { md, title: firstH1, uploadFailures };
+    return { md, title: firstH1, uploadFailures, centeredImageIndexes, centeredTableIndexes };
 }

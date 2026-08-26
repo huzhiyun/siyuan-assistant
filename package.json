@@ -1,12 +1,12 @@
 {
   "name": "siyuan-assistant",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "SiYuan Assistant plugin: DOCX import, heading flatten, image width, section export",
   "main": "src/index.ts",
   "scripts": {
     "build": "webpack --config webpack.config.js --mode production",
     "dev": "webpack --config webpack.config.js --mode development",
-    "test": "esbuild src/docx.ts --bundle --format=cjs --outfile=/tmp/syass_docx.cjs --log-level=error && esbuild src/blocks.ts --bundle --format=cjs --outfile=/tmp/syass_blocks.cjs --log-level=error && esbuild src/docxgen.ts --bundle --format=cjs --outfile=/tmp/syass_docxgen.cjs --log-level=error && node test/parse.test.mjs && node test/blocks.test.mjs && node test/docxgen.test.mjs",
+    "test": "esbuild src/docx.ts --bundle --format=cjs --outfile=/tmp/syass_docx.cjs --log-level=error && esbuild src/image-layout.ts --bundle --format=cjs --outfile=/tmp/syass_image_layout.cjs --log-level=error && esbuild src/blocks.ts --bundle --format=cjs --outfile=/tmp/syass_blocks.cjs --log-level=error && esbuild src/docxgen.ts --bundle --format=cjs --outfile=/tmp/syass_docxgen.cjs --log-level=error && node test/parse.test.mjs && node test/image-layout.test.mjs && node test/blocks.test.mjs && node test/docxgen.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [],

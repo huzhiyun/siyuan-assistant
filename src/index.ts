@@ -18,7 +18,8 @@ import {
     fetchPost,
     getFrontend,
 } from "siyuan";
-import { parseDocx } from "./docx";
+import { parseDocx, type ImageExtent } from "./docx";
+import { rotatedRasterDimensions } from "./image-layout";
 import { parseHtml, sliceElement, htmlToBlocks, mdFromBlocks } from "./blocks";
 import { blocksToDocument, documentToBlob, type ImageData } from "./docxgen";
 import "./index.scss";
@@ -326,16 +327,16 @@ export default class SiYuanAssistant extends Plugin {
     private async parseDocxFile(
         file: File,
         onProgress?: (done: number, total: number) => void
-    ): Promise<{ md: string; title: string; uploadFailures: number }> {
+    ): Promise<{ md: string; title: string; uploadFailures: number; centeredImageIndexes: number[]; centeredTableIndexes: number[] }> {
         const ab = await file.arrayBuffer();
         const baseName = file.name.replace(/\.docx$/i, "");
-        return parseDocx(ab, baseName, (blob, name, dir, rotationDegrees) => this.uploadImage(blob, name, dir, rotationDegrees), {
+        return parseDocx(ab, baseName, (blob, name, dir, rotationDegrees, extent) => this.uploadImage(blob, name, dir, rotationDegrees, extent), {
             concurrency: 4,
             onProgress,
         });
     }
     private async importDocx(
-        parsed: { md: string; title: string },
+        parsed: { md: string; title: string; centeredImageIndexes: number[]; centeredTableIndexes: number[] },
         notebook: string,
         title: string,
         keepH1: boolean
@@ -360,7 +361,37 @@ export default class SiYuanAssistant extends Plugin {
         if (!docId) {
             throw new Error("createDocWithMd 未返回文档 ID");
         }
+        await this.applyCenteredDocxLayout(docId, parsed);
         return docId;
+    }
+
+    /** Persist Word center alignment on the corresponding imported image/table blocks. */
+    private async applyCenteredDocxLayout(
+        docId: string,
+        parsed: { centeredImageIndexes: number[]; centeredTableIndexes: number[] }
+    ): Promise<void> {
+        if (parsed.centeredImageIndexes.length === 0 && parsed.centeredTableIndexes.length === 0) return;
+        const safeDocId = docId.replace(/'/g, "''");
+        const resp = await api("/api/query/sql", {
+            stmt: `SELECT id, type, markdown FROM blocks WHERE root_id = '${safeDocId}' AND type IN ('p', 't') ORDER BY sort ASC`,
+        });
+        const blocks = Array.isArray(resp.data) ? resp.data : [];
+        const imageBlocks = blocks.filter((block: any) => block.type === "p" && /!\[[^\]]*\]\(/.test(block.markdown || ""));
+        const tableBlocks = blocks.filter((block: any) => block.type === "t");
+        const ids = [
+            ...parsed.centeredImageIndexes.map((index) => imageBlocks[index]?.id),
+            ...parsed.centeredTableIndexes.map((index) => tableBlocks[index]?.id),
+        ].filter((id): id is string => typeof id === "string" && id.length > 0);
+        if (ids.length !== parsed.centeredImageIndexes.length + parsed.centeredTableIndexes.length) {
+            throw new Error("无法定位导入后的居中图片或表格块");
+        }
+        await Promise.all(ids.map(async (id) => {
+            await api("/api/attr/setBlockAttrs", { id, attrs: { "custom-syass-align": "center" } });
+            const attrs = await api("/api/attr/getBlockAttrs", { id });
+            if (attrs.data?.["custom-syass-align"] !== "center") {
+                throw new Error(`居中属性写入未确认: ${id}`);
+            }
+        }));
     }
 
     private static escapeRegex(s: string): string {
@@ -368,23 +399,23 @@ export default class SiYuanAssistant extends Plugin {
     }
 
     /** 把 OOXML 图形旋转烧录到像素；思源图片块不保留 Word 的 a:xfrm 元数据。 */
-    private async rotateImageBlob(blob: Blob, rotationDegrees: number): Promise<Blob> {
+    private async rotateImageBlob(blob: Blob, rotationDegrees: number, extent?: ImageExtent): Promise<Blob> {
         if (!rotationDegrees || blob.type === "image/gif" || typeof createImageBitmap !== "function") {
             return blob;
         }
         try {
             const bitmap = await createImageBitmap(blob);
-            const swapSides = rotationDegrees === 90 || rotationDegrees === 270;
+            const dimensions = rotatedRasterDimensions(bitmap.width, bitmap.height, rotationDegrees, extent);
             const canvas = document.createElement("canvas");
-            canvas.width = swapSides ? bitmap.height : bitmap.width;
-            canvas.height = swapSides ? bitmap.width : bitmap.height;
+            canvas.width = dimensions.width;
+            canvas.height = dimensions.height;
             const ctx = canvas.getContext("2d");
             if (!ctx) {
                 return blob;
             }
             ctx.translate(canvas.width / 2, canvas.height / 2);
             ctx.rotate((rotationDegrees * Math.PI) / 180);
-            ctx.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2);
+            ctx.drawImage(bitmap, -dimensions.sourceWidth / 2, -dimensions.sourceHeight / 2, dimensions.sourceWidth, dimensions.sourceHeight);
             bitmap.close();
             const type = blob.type === "image/png" ? "image/png" : "image/jpeg";
             return await new Promise<Blob>((resolve) => canvas.toBlob((out) => resolve(out || blob), type, 0.92));
@@ -400,8 +431,8 @@ export default class SiYuanAssistant extends Plugin {
     }
 
     /** 上传图片到思源 assets，返回 assets 相对路径；失败重试后仍失败返回 ""（不阻塞整体导入） */
-    private async uploadImage(blob: Blob, name: string, dir: string, rotationDegrees = 0): Promise<string> {
-        const normalizedBlob = await this.rotateImageBlob(blob, rotationDegrees);
+    private async uploadImage(blob: Blob, name: string, dir: string, rotationDegrees = 0, extent?: ImageExtent): Promise<string> {
+        const normalizedBlob = await this.rotateImageBlob(blob, rotationDegrees, extent);
         const hash = this.reuseImages ? await this.sha256(normalizedBlob) : "";
         const cacheKey = hash ? `syass:image:${hash}` : "";
         const cached = cacheKey ? localStorage.getItem(cacheKey) : "";

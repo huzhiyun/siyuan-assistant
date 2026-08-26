@@ -27,6 +27,7 @@ const DOCUMENT_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <w:p><w:r><w:rPr><w:b/></w:rPr><w:t>·</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>多个</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>连续</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>加粗项</w:t></w:r></w:p>
   <w:p><w:r><w:rPr><w:u w:val="single"/></w:rPr><w:t>带下划线</w:t></w:r><w:r><w:rPr><w:u w:val="none"/></w:rPr><w:t>普通文本</w:t></w:r></w:p>
   <w:tbl>
+    <w:tblPr><w:jc w:val="center"/></w:tblPr>
     <w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>合并单元格A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr>
     <w:tr><w:tc><w:p><w:r><w:t>C</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>D</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>E</w:t></w:r></w:p></w:tc></w:tr>
     <w:tr><w:tc><w:p><w:r><w:t></w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t></w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t></w:t></w:r></w:p></w:tc></w:tr>
@@ -35,8 +36,9 @@ const DOCUMENT_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <w:tr><w:tc><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>拆分</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>表头</w:t></w:r></w:p></w:tc></w:tr>
   </w:tbl>
   <w:p>
+    <w:pPr><w:jc w:val="center"/></w:pPr>
     <w:r><w:drawing>
-      <wp:inline><wp:docPr id="0" name="截图1.png" descr="架构截图"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId5"/></pic:blipFill><pic:spPr><a:xfrm rot="5400000"><a:off x="0" y="0"/><a:ext cx="100" cy="200"/></a:xfrm></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline>
+      <wp:inline><wp:extent cx="200" cy="100"/><wp:docPr id="0" name="截图1.png" descr="架构截图"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId5"/></pic:blipFill><pic:spPr><a:xfrm rot="5400000"><a:off x="0" y="0"/><a:ext cx="100" cy="200"/></a:xfrm></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline>
     </w:drawing></w:r>
   </w:p>
   <w:sectPr/>
@@ -83,8 +85,8 @@ function assert(name, cond, extra = "") {
 
 const ab = await buildTestZip();
 const uploadCalls = [];
-const { md, title } = await parseDocx(ab, "testdoc", (blob, name, dir, rotation) => {
-    uploadCalls.push({ name, dir, size: blob.size, rotation });
+const { md, title, centeredImageIndexes, centeredTableIndexes } = await parseDocx(ab, "testdoc", (blob, name, dir, rotation, extent) => {
+    uploadCalls.push({ name, dir, size: blob.size, rotation, extent });
     return `${dir}/${name}`;
 });
 
@@ -122,6 +124,11 @@ assert("图片行 ![](assets/testdoc/image_5.png)", md.includes("![架构截图]
 assert("上传回调收到正确参数", uploadCalls.length === 1 && uploadCalls[0].name === "image_5.png" && uploadCalls[0].dir === "assets/testdoc", JSON.stringify(uploadCalls));
 assert("上传 blob 是 PNG", uploadCalls.length === 1 && uploadCalls[0].size === PNG.length);
 assert("读取 OOXML 图形旋转并传给上传层", uploadCalls.length === 1 && uploadCalls[0].rotation === 90, JSON.stringify(uploadCalls));
+assert("读取 wp:extent 作为图片显示尺寸", uploadCalls.length === 1 && uploadCalls[0].extent?.widthEmu === 200 && uploadCalls[0].extent?.heightEmu === 100, JSON.stringify(uploadCalls));
+
+console.log("=== 布局 ===");
+assert("居中图片记录为创建后第一个图片块", JSON.stringify(centeredImageIndexes) === "[0]", JSON.stringify(centeredImageIndexes));
+assert("居中表格记录为创建后第一个表格块", JSON.stringify(centeredTableIndexes) === "[0]", JSON.stringify(centeredTableIndexes));
 
 console.log(`\n结果: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail > 0 ? 1 : 0);
