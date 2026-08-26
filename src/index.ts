@@ -325,7 +325,7 @@ export default class SiYuanAssistant extends Plugin {
     ): Promise<{ md: string; title: string; uploadFailures: number }> {
         const ab = await file.arrayBuffer();
         const baseName = file.name.replace(/\.docx$/i, "");
-        return parseDocx(ab, baseName, (blob, name, dir) => this.uploadImage(blob, name, dir), {
+        return parseDocx(ab, baseName, (blob, name, dir, rotationDegrees) => this.uploadImage(blob, name, dir, rotationDegrees), {
             concurrency: 4,
             onProgress,
         });
@@ -363,12 +363,40 @@ export default class SiYuanAssistant extends Plugin {
         return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     }
 
+    /** 把 OOXML 图形旋转烧录到像素；思源图片块不保留 Word 的 a:xfrm 元数据。 */
+    private async rotateImageBlob(blob: Blob, rotationDegrees: number): Promise<Blob> {
+        if (!rotationDegrees || blob.type === "image/gif" || typeof createImageBitmap !== "function") {
+            return blob;
+        }
+        try {
+            const bitmap = await createImageBitmap(blob);
+            const swapSides = rotationDegrees === 90 || rotationDegrees === 270;
+            const canvas = document.createElement("canvas");
+            canvas.width = swapSides ? bitmap.height : bitmap.width;
+            canvas.height = swapSides ? bitmap.width : bitmap.height;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+                return blob;
+            }
+            ctx.translate(canvas.width / 2, canvas.height / 2);
+            ctx.rotate((rotationDegrees * Math.PI) / 180);
+            ctx.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2);
+            bitmap.close();
+            const type = blob.type === "image/png" ? "image/png" : "image/jpeg";
+            return await new Promise<Blob>((resolve) => canvas.toBlob((out) => resolve(out || blob), type, 0.92));
+        } catch (e) {
+            console.warn(`图片旋转处理失败，保留原图: ${rotationDegrees}°`, e);
+            return blob;
+        }
+    }
+
     /** 上传图片到思源 assets，返回 assets 相对路径；失败重试后仍失败返回 ""（不阻塞整体导入） */
-    private async uploadImage(blob: Blob, name: string, dir: string): Promise<string> {
+    private async uploadImage(blob: Blob, name: string, dir: string, rotationDegrees = 0): Promise<string> {
+        const normalizedBlob = await this.rotateImageBlob(blob, rotationDegrees);
         const token = window.localStorage.getItem("token") || "";
         const fd = new FormData();
         fd.append("assetsDirPath", dir);
-        fd.append("file[]", blob, name);
+        fd.append("file[]", normalizedBlob, name);
         // 实测（v3.6.4）：/api/upload 404 不存在；正确端点是 /api/asset/upload，
         // 响应为 data.succMap = { 原文件名: "assets/.../改名.png" }
         // 旧版本兼容保留 /api/upload + data[0].url 分支

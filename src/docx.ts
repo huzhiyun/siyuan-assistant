@@ -13,13 +13,14 @@ const R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const A = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const V = "urn:schemas-microsoft-com:vml";
 
-export type UploadFn = (blob: Blob, name: string, dir: string) => Promise<string>;
+export type UploadFn = (blob: Blob, name: string, dir: string, rotationDegrees: number) => Promise<string>;
 
 interface ImgRef {
     rId: string;
     alt: string;
     target: string; // docx 内部路径，如 word/media/image1.png
     ext: string;
+    rotationDegrees: number;
 }
 
 interface DocxResult {
@@ -71,10 +72,29 @@ function isEnabledRunProperty(rPr: Element, local: string): boolean {
     return value !== "0" && value !== "false" && value !== "off";
 }
 
+function findDrawingRotation(el: Element): number {
+    const transforms = el.getElementsByTagNameNS(A, "xfrm");
+    if (transforms.length === 0) {
+        return 0;
+    }
+    const raw = parseInt(transforms[0].getAttribute("rot") || "0", 10);
+    // OOXML stores clockwise degrees × 60,000. Keep only right-angle rotations
+    // that can be losslessly rasterized before the image is uploaded to SiYuan.
+    const degrees = ((Math.round(raw / 60000) % 360) + 360) % 360;
+    return degrees === 90 || degrees === 180 || degrees === 270 ? degrees : 0;
+}
+
+function normalizeInlineMarkdown(s: string): string {
+    // Word frequently splits one visually continuous bold span into many runs.
+    // Concatenating per-run Markdown yields `**A****B**`, which Lute displays
+    // literally; join only adjacent bold delimiters, not bold+italic `***`.
+    return s.replace(/\*\*\*\*/g, "");
+}
+
 /** 递归提取 run 级内容：文本 / 换行 / 图片引用 */
 function docxRunsToText(
     container: Element,
-    addRef: (rId: string, alt: string) => void
+    addRef: (rId: string, alt: string, rotationDegrees: number) => void
 ): Array<{ type: "text" | "img" | "pageBreak"; markdown: string; rId: string }> {
     const out: Array<{ type: "text" | "img" | "pageBreak"; markdown: string; rId: string }> = [];
     const wrap = (t: string, bold: boolean, italic: boolean, sup: boolean, sub: boolean): string => {
@@ -143,7 +163,7 @@ function docxRunsToText(
                     if (docPrs.length > 0) {
                         alt = docPrs[0].getAttribute("descr") || docPrs[0].getAttribute("name") || "";
                     }
-                    addRef(blip, alt);
+                    addRef(blip, alt, findDrawingRotation(child));
                     out.push({ type: "img", markdown: "", rId: blip });
                 }
             } else if (local === "hyperlink") {
@@ -162,7 +182,7 @@ function docxRunsToText(
 /** 段落 → markdown 块（含标题、列表、硬分页、内联格式与图片占位符） */
 function docxParaToMd(
     p: Element,
-    addRef: (rId: string, alt: string) => void,
+    addRef: (rId: string, alt: string, rotationDegrees: number) => void,
     styleLevels: Map<string, number>
 ): { md: string } {
     let level = 0;
@@ -193,16 +213,22 @@ function docxParaToMd(
     const imgs: string[] = [];
     let text = "";
     const flushText = () => {
-        const content = text.trim();
+        const content = normalizeInlineMarkdown(text.trim());
         text = "";
         if (!content) {
             return;
         }
+        const plainDotBullet = /^·\s*(.*)$/.exec(content);
+        const boldDotBullet = /^\*\*·\s*(.*?)\*\*$/.exec(content);
+        const splitBoldDotBullet = /^\*\*·\*\*(.*)$/.exec(content);
+        const bullet = boldDotBullet ? `- **${boldDotBullet[1]}**` : splitBoldDotBullet ? `- ${splitBoldDotBullet[1]}` : plainDotBullet ? `- ${plainDotBullet[1]}` : "";
         if (level > 0) {
             const headText = content.replace(/\*\*/g, "");
             if (headText) {
                 lines.push(`${"#".repeat(level)} ${headText}`);
             }
+        } else if (bullet) {
+            lines.push(bullet);
         } else if (listLevel !== null) {
             lines.push(`${"  ".repeat(listLevel)}1. ${content}`);
         } else {
@@ -225,7 +251,7 @@ function docxParaToMd(
 }
 
 /** 表格 → markdown 表格（gridSpan 补空、vMerge continue 跳过、全空行跳过） */
-function docxTableToMd(tbl: Element, addRef: (rId: string, alt: string) => void): string {
+function docxTableToMd(tbl: Element, addRef: (rId: string, alt: string, rotationDegrees: number) => void): string {
     const rows: string[][] = [];
     const imgs: string[] = [];
     for (const tr of Array.from(tbl.getElementsByTagNameNS(W, "tr"))) {
@@ -270,7 +296,7 @@ function docxTableToMd(tbl: Element, addRef: (rId: string, alt: string) => void)
                     cellText += run.markdown;
                 }
             }
-            cellText = escPipe(cellText.replace(/\s*\n+\s*/g, " ").trim());
+            cellText = escPipe(normalizeInlineMarkdown(cellText.replace(/\s*\n+\s*/g, " ").trim()));
             cells.push(cellText);
             for (let i = 1; i < gridSpan; i++) {
                 cells.push("");
@@ -361,7 +387,7 @@ export async function parseDocx(
 
     const mediaRefs: ImgRef[] = [];
     const seenRefs = new Set<string>();
-    const addRef = (rId: string, alt: string) => {
+    const addRef = (rId: string, alt: string, rotationDegrees: number) => {
         if (!rId || seenRefs.has(rId)) {
             return;
         }
@@ -372,7 +398,13 @@ export async function parseDocx(
         seenRefs.add(rId);
         const extMatch = /\.(\w+)$/.exec(target);
         const ext = extMatch ? extMatch[1] : "png";
-        mediaRefs.push({ rId, alt: alt || `image_${mediaRefs.length + 1}`, target: `word/${target}`, ext });
+        mediaRefs.push({
+            rId,
+            alt: alt || `image_${mediaRefs.length + 1}`,
+            target: `word/${target}`,
+            ext,
+            rotationDegrees,
+        });
     };
 
     const body = doc.getElementsByTagNameNS(W, "body")[0];
@@ -422,7 +454,7 @@ export async function parseDocx(
                     urlMap.set(ref.rId, "");
                 } else {
                     const blob = await zf.async("blob");
-                    const url = await upload(blob, `image_${ref.rId.replace(/^rId/i, "")}.${ref.ext}`, dir);
+                    const url = await upload(blob, `image_${ref.rId.replace(/^rId/i, "")}.${ref.ext}`, dir, ref.rotationDegrees);
                     if (url) {
                         urlMap.set(ref.rId, url);
                     } else {

@@ -24,14 +24,18 @@ const DOCUMENT_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> INCLUDEPICTURE &quot;https://example.invalid/image.png&quot; \\* MERGEFORMAT </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>域后正文</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>
   <w:p><w:r><w:rPr><w:b w:val="0"/><w:i w:val="0"/></w:rPr><w:t>明确非粗斜</w:t></w:r></w:p>
   <w:p><w:r><w:t>这是</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>加粗</w:t></w:r><w:r><w:t>和</w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t>斜体</w:t></w:r><w:r><w:t>文本。</w:t></w:r></w:p>
+  <w:p><w:r><w:rPr><w:b/></w:rPr><w:t>·</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>多个</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>连续</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>加粗项</w:t></w:r></w:p>
   <w:tbl>
     <w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>合并单元格A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr>
     <w:tr><w:tc><w:p><w:r><w:t>C</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>D</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>E</w:t></w:r></w:p></w:tc></w:tr>
     <w:tr><w:tc><w:p><w:r><w:t></w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t></w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t></w:t></w:r></w:p></w:tc></w:tr>
   </w:tbl>
+  <w:tbl>
+    <w:tr><w:tc><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>拆分</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>表头</w:t></w:r></w:p></w:tc></w:tr>
+  </w:tbl>
   <w:p>
     <w:r><w:drawing>
-      <wp:inline><wp:docPr id="0" name="截图1.png" descr="架构截图"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId5"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline>
+      <wp:inline><wp:docPr id="0" name="截图1.png" descr="架构截图"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId5"/></pic:blipFill><pic:spPr><a:xfrm rot="5400000"><a:off x="0" y="0"/><a:ext cx="100" cy="200"/></a:xfrm></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline>
     </w:drawing></w:r>
   </w:p>
   <w:sectPr/>
@@ -78,8 +82,8 @@ function assert(name, cond, extra = "") {
 
 const ab = await buildTestZip();
 const uploadCalls = [];
-const { md, title } = await parseDocx(ab, "testdoc", (blob, name, dir) => {
-    uploadCalls.push({ name, dir, size: blob.size });
+const { md, title } = await parseDocx(ab, "testdoc", (blob, name, dir, rotation) => {
+    uploadCalls.push({ name, dir, size: blob.size, rotation });
     return `${dir}/${name}`;
 });
 
@@ -98,6 +102,8 @@ assert("域后的可见正文保留", md.includes("域后正文"), md);
 console.log("=== 内联格式 ===");
 assert("显式 w:val=0 的粗斜体开关必须保持普通文本", md.split("\n").includes("明确非粗斜"), md.split("\n").find(l => l.includes("明确非粗斜")));
 assert("加粗 **加粗**", md.includes("这是**加粗**和*斜体*文本。"), md.split("\n").find(l => l.includes("加粗")));
+assert("连续加粗 run 合并为一对标记", md.includes("**多个连续加粗项**") && !md.includes("**多个****连续"), md.split("\n").find(l => l.includes("多个")));
+assert("中点项目转换为 Markdown 无序列表", md.includes("- **多个连续加粗项**"), md.split("\n").find(l => l.includes("多个")));
 
 console.log("=== 表格 ===");
 const tblLines = md.split("\n\n").find(b => b.includes("合并单元格A"));
@@ -106,11 +112,14 @@ assert("gridSpan 补空: |合并单元格A||B|", tblLines && tblLines.includes("
 assert("分隔行 |---|---|---|", tblLines && tblLines.includes("|---|---|---|"));
 assert("第二行 |C|D|E|", tblLines && tblLines.includes("|C|D|E|"));
 assert("全空行已跳过（无 ||||||）", tblLines && !tblLines.includes("||||||"));
+const splitBoldTable = md.split("\n\n").find(b => b.includes("拆分"));
+assert("表格连续粗体 run 合并为一对标记", splitBoldTable && splitBoldTable.includes("|**拆分表头**|") && !splitBoldTable.includes("****"), splitBoldTable);
 
 console.log("=== 图片 ===");
 assert("图片行 ![](assets/testdoc/image_5.png)", md.includes("![架构截图](assets/testdoc/image_5.png)"));
 assert("上传回调收到正确参数", uploadCalls.length === 1 && uploadCalls[0].name === "image_5.png" && uploadCalls[0].dir === "assets/testdoc", JSON.stringify(uploadCalls));
 assert("上传 blob 是 PNG", uploadCalls.length === 1 && uploadCalls[0].size === PNG.length);
+assert("读取 OOXML 图形旋转并传给上传层", uploadCalls.length === 1 && uploadCalls[0].rotation === 90, JSON.stringify(uploadCalls));
 
 console.log(`\n结果: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail > 0 ? 1 : 0);
