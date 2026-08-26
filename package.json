@@ -1,6 +1,6 @@
 {
   "name": "siyuan-assistant",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "SiYuan Assistant plugin: DOCX import, heading flatten, image width, section export",
   "main": "src/index.ts",
   "scripts": {
@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "keywords": [],
-  "author": "feihan",
+  "author": "狐公子",
   "license": "MIT",
   "packageManager": "npm@10.9.8",
   "engines": {

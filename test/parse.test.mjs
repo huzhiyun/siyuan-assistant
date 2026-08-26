@@ -25,6 +25,7 @@ const DOCUMENT_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <w:p><w:r><w:rPr><w:b w:val="0"/><w:i w:val="0"/></w:rPr><w:t>明确非粗斜</w:t></w:r></w:p>
   <w:p><w:r><w:t>这是</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>加粗</w:t></w:r><w:r><w:t>和</w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t>斜体</w:t></w:r><w:r><w:t>文本。</w:t></w:r></w:p>
   <w:p><w:r><w:rPr><w:b/></w:rPr><w:t>·</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>多个</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>连续</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>加粗项</w:t></w:r></w:p>
+  <w:p><w:r><w:rPr><w:u w:val="single"/></w:rPr><w:t>带下划线</w:t></w:r><w:r><w:rPr><w:u w:val="none"/></w:rPr><w:t>普通文本</w:t></w:r></w:p>
   <w:tbl>
     <w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>合并单元格A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr>
     <w:tr><w:tc><w:p><w:r><w:t>C</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>D</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>E</w:t></w:r></w:p></w:tc></w:tr>
@@ -104,6 +105,7 @@ assert("显式 w:val=0 的粗斜体开关必须保持普通文本", md.split("\n
 assert("加粗 **加粗**", md.includes("这是**加粗**和*斜体*文本。"), md.split("\n").find(l => l.includes("加粗")));
 assert("连续加粗 run 合并为一对标记", md.includes("**多个连续加粗项**") && !md.includes("**多个****连续"), md.split("\n").find(l => l.includes("多个")));
 assert("中点项目转换为 Markdown 无序列表", md.includes("- **多个连续加粗项**"), md.split("\n").find(l => l.includes("多个")));
+assert("下划线只还原启用的 w:u", md.includes("<u>带下划线</u>普通文本"), md.split("\n").find(l => l.includes("带下划线")));
 
 console.log("=== 表格 ===");
 const tblLines = md.split("\n\n").find(b => b.includes("合并单元格A"));

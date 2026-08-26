@@ -72,6 +72,13 @@ function isEnabledRunProperty(rPr: Element, local: string): boolean {
     return value !== "0" && value !== "false" && value !== "off";
 }
 
+function isEnabledUnderline(rPr: Element): boolean {
+    const prop = firstChildNS(rPr, W, "u");
+    if (!prop) return false;
+    const value = (prop.getAttributeNS(W, "val") || prop.getAttribute("w:val") || "single").toLowerCase();
+    return value !== "none" && value !== "0" && value !== "false" && value !== "off";
+}
+
 function findDrawingRotation(el: Element): number {
     const transforms = el.getElementsByTagNameNS(A, "xfrm");
     if (transforms.length === 0) {
@@ -97,8 +104,11 @@ function docxRunsToText(
     addRef: (rId: string, alt: string, rotationDegrees: number) => void
 ): Array<{ type: "text" | "img" | "pageBreak"; markdown: string; rId: string }> {
     const out: Array<{ type: "text" | "img" | "pageBreak"; markdown: string; rId: string }> = [];
-    const wrap = (t: string, bold: boolean, italic: boolean, sup: boolean, sub: boolean): string => {
+    const wrap = (t: string, bold: boolean, italic: boolean, sup: boolean, sub: boolean, underline: boolean): string => {
         let s = t.replace(/\u00a0/g, " ");
+        if (underline) {
+            s = `<u>${s}</u>`;
+        }
         if (bold) {
             s = `**${s}**`;
         }
@@ -113,12 +123,12 @@ function docxRunsToText(
         }
         return s;
     };
-    const walk = (el: Element, bold: boolean, italic: boolean, sup: boolean, sub: boolean) => {
+    const walk = (el: Element, bold: boolean, italic: boolean, sup: boolean, sub: boolean, underline: boolean) => {
         for (const node of Array.from(el.childNodes)) {
             if (node.nodeType === 3) {
                 const t = node.textContent || "";
                 if (t) {
-                    out.push({ type: "text", markdown: wrap(t, bold, italic, sup, sub), rId: "" });
+                    out.push({ type: "text", markdown: wrap(t, bold, italic, sup, sub, underline), rId: "" });
                 }
                 continue;
             }
@@ -132,10 +142,12 @@ function docxRunsToText(
                 let ci = italic;
                 let cs = sup;
                 let csub = sub;
+                let cu = underline;
                 const rPr = firstChildNS(child, W, "rPr");
                 if (rPr) {
                     cb = bold || isEnabledRunProperty(rPr, "b");
                     ci = italic || isEnabledRunProperty(rPr, "i");
+                    cu = underline || isEnabledUnderline(rPr);
                     const va = firstChildNS(rPr, W, "vertAlign");
                     if (va) {
                         const val = va.getAttributeNS(W, "val");
@@ -143,11 +155,11 @@ function docxRunsToText(
                         csub = val === "subscript";
                     }
                 }
-                walk(child, cb, ci, cs, csub);
+                walk(child, cb, ci, cs, csub, cu);
             } else if (local === "t") {
                 const t = node.textContent || "";
                 if (t) {
-                    out.push({ type: "text", markdown: wrap(t, bold, italic, sup, sub), rId: "" });
+                    out.push({ type: "text", markdown: wrap(t, bold, italic, sup, sub, underline), rId: "" });
                 }
             } else if (local === "br") {
                 const breakType = child.getAttributeNS(W, "type") || child.getAttribute("w:type") || "";
@@ -167,15 +179,15 @@ function docxRunsToText(
                     out.push({ type: "img", markdown: "", rId: blip });
                 }
             } else if (local === "hyperlink") {
-                walk(child, bold, italic, sup, sub);
+                walk(child, bold, italic, sup, sub, underline);
             } else if (local === "bookmarkStart" || local === "bookmarkEnd" || local === "proofErr" || local === "instrText" || local === "fldChar") {
                 // 忽略书签、校对标记和 Word 域指令；域结果中的可见 w:t 仍会正常保留
             } else {
-                walk(child, bold, italic, sup, sub);
+                walk(child, bold, italic, sup, sub, underline);
             }
         }
     };
-    walk(container, false, false, false, false);
+    walk(container, false, false, false, false, false);
     return out;
 }
 

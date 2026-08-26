@@ -1,8 +1,8 @@
 {
   "name": "siyuan-assistant",
-  "author": "feihan",
+  "author": "狐公子",
   "url": "",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "minAppVersion": "3.6.4",
   "frontends": [
     "desktop",

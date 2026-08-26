@@ -107,6 +107,7 @@ interface HeadingInfo {
 
 export default class SiYuanAssistant extends Plugin {
     private isMobile = false;
+    private reuseImages = true;
 
     async onload() {
         this.isMobile = ["mobile", "browser-mobile"].includes(getFrontend());
@@ -258,6 +259,7 @@ export default class SiYuanAssistant extends Plugin {
   </div>
   <div class="fn__block">
     <label class="fn__block"><input type="checkbox" id="syassKeepH1"> 正文保留一级标题（不勾选则第一个 H1 作为文档标题，正文不含 H1）</label>
+    <label class="fn__block"><input type="checkbox" id="syassReuseImages" checked> 复用相同图片（SHA-256，避免重复上传）</label>
   </div>
 </div>
 <div class="b3-dialog__action">
@@ -270,6 +272,7 @@ export default class SiYuanAssistant extends Plugin {
         const fileInput = dlg.element.querySelector("#syassDocxFile") as HTMLInputElement;
         const titleInput = dlg.element.querySelector("#syassDocTitle") as HTMLInputElement;
         const keepH1 = dlg.element.querySelector("#syassKeepH1") as HTMLInputElement;
+        const reuseImages = dlg.element.querySelector("#syassReuseImages") as HTMLInputElement;
         const goBtn = dlg.element.querySelector("#syassGo") as HTMLButtonElement;
 
         api("/api/notebook/lsNotebooks", {})
@@ -300,6 +303,7 @@ export default class SiYuanAssistant extends Plugin {
             }
             goBtn.disabled = true;
             goBtn.textContent = "开始导入";
+            this.reuseImages = reuseImages.checked;
             try {
                 const title = (titleInput.value || file.name.replace(/\.docx$/i, "")).trim();
                 goBtn.textContent = "正在解析 docx…";
@@ -390,9 +394,18 @@ export default class SiYuanAssistant extends Plugin {
         }
     }
 
+    private async sha256(blob: Blob): Promise<string> {
+        const bytes = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+        return Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2, "0")).join("");
+    }
+
     /** 上传图片到思源 assets，返回 assets 相对路径；失败重试后仍失败返回 ""（不阻塞整体导入） */
     private async uploadImage(blob: Blob, name: string, dir: string, rotationDegrees = 0): Promise<string> {
         const normalizedBlob = await this.rotateImageBlob(blob, rotationDegrees);
+        const hash = this.reuseImages ? await this.sha256(normalizedBlob) : "";
+        const cacheKey = hash ? `syass:image:${hash}` : "";
+        const cached = cacheKey ? localStorage.getItem(cacheKey) : "";
+        if (cached) return cached;
         const token = window.localStorage.getItem("token") || "";
         const fd = new FormData();
         fd.append("assetsDirPath", dir);
@@ -413,7 +426,9 @@ export default class SiYuanAssistant extends Plugin {
                     const json: any = await resp.json().catch((): null => null);
                     if (json && json.code === 0) {
                         if (json.data && json.data.succMap && json.data.succMap[name]) {
-                            return json.data.succMap[name] as string;
+                            const uploaded = json.data.succMap[name] as string;
+                            if (cacheKey) localStorage.setItem(cacheKey, uploaded);
+                            return uploaded;
                         }
                         if (json.data && json.data[0] && json.data[0].url) {
                             return json.data[0].url as string;
