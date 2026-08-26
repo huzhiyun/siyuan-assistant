@@ -62,6 +62,15 @@ function findBlipRId(el: Element): string {
     return "";
 }
 
+function isEnabledRunProperty(rPr: Element, local: string): boolean {
+    const prop = firstChildNS(rPr, W, local);
+    if (!prop) {
+        return false;
+    }
+    const value = (prop.getAttributeNS(W, "val") || prop.getAttribute("w:val") || "1").toLowerCase();
+    return value !== "0" && value !== "false" && value !== "off";
+}
+
 /** 递归提取 run 级内容：文本 / 换行 / 图片引用 */
 function docxRunsToText(
     container: Element,
@@ -105,8 +114,8 @@ function docxRunsToText(
                 let csub = sub;
                 const rPr = firstChildNS(child, W, "rPr");
                 if (rPr) {
-                    cb = bold || !!firstChildNS(rPr, W, "b");
-                    ci = italic || !!firstChildNS(rPr, W, "i");
+                    cb = bold || isEnabledRunProperty(rPr, "b");
+                    ci = italic || isEnabledRunProperty(rPr, "i");
                     const va = firstChildNS(rPr, W, "vertAlign");
                     if (va) {
                         const val = va.getAttributeNS(W, "val");

@@ -22,6 +22,7 @@ const DOCUMENT_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <w:p><w:r><w:t>分页前</w:t></w:r><w:r><w:br w:type="page"/></w:r><w:r><w:t>分页后</w:t></w:r></w:p>
   <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>第一项</w:t></w:r></w:p>
   <w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> INCLUDEPICTURE &quot;https://example.invalid/image.png&quot; \\* MERGEFORMAT </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>域后正文</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>
+  <w:p><w:r><w:rPr><w:b w:val="0"/><w:i w:val="0"/></w:rPr><w:t>明确非粗斜</w:t></w:r></w:p>
   <w:p><w:r><w:t>这是</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>加粗</w:t></w:r><w:r><w:t>和</w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t>斜体</w:t></w:r><w:r><w:t>文本。</w:t></w:r></w:p>
   <w:tbl>
     <w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>合并单元格A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr>
@@ -95,6 +96,7 @@ assert("INCLUDEPICTURE 域指令不进入正文", !md.includes("INCLUDEPICTURE")
 assert("域后的可见正文保留", md.includes("域后正文"), md);
 
 console.log("=== 内联格式 ===");
+assert("显式 w:val=0 的粗斜体开关必须保持普通文本", md.split("\n").includes("明确非粗斜"), md.split("\n").find(l => l.includes("明确非粗斜")));
 assert("加粗 **加粗**", md.includes("这是**加粗**和*斜体*文本。"), md.split("\n").find(l => l.includes("加粗")));
 
 console.log("=== 表格 ===");
