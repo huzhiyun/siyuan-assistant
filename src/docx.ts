@@ -66,8 +66,8 @@ function findBlipRId(el: Element): string {
 function docxRunsToText(
     container: Element,
     addRef: (rId: string, alt: string) => void
-): Array<{ type: "text" | "img"; markdown: string; rId: string }> {
-    const out: Array<{ type: "text" | "img"; markdown: string; rId: string }> = [];
+): Array<{ type: "text" | "img" | "pageBreak"; markdown: string; rId: string }> {
+    const out: Array<{ type: "text" | "img" | "pageBreak"; markdown: string; rId: string }> = [];
     const wrap = (t: string, bold: boolean, italic: boolean, sup: boolean, sub: boolean): string => {
         let s = t.replace(/\u00a0/g, " ");
         if (bold) {
@@ -121,7 +121,8 @@ function docxRunsToText(
                     out.push({ type: "text", markdown: wrap(t, bold, italic, sup, sub), rId: "" });
                 }
             } else if (local === "br") {
-                out.push({ type: "text", markdown: "\n", rId: "" });
+                const breakType = child.getAttributeNS(W, "type") || child.getAttribute("w:type") || "";
+                out.push({ type: breakType === "page" ? "pageBreak" : "text", markdown: breakType === "page" ? "" : "\n", rId: "" });
             } else if (local === "tab") {
                 out.push({ type: "text", markdown: "  ", rId: "" });
             } else if (local === "drawing" || local === "pict") {
@@ -138,8 +139,8 @@ function docxRunsToText(
                 }
             } else if (local === "hyperlink") {
                 walk(child, bold, italic, sup, sub);
-            } else if (local === "bookmarkStart" || local === "bookmarkEnd" || local === "proofErr") {
-                // 忽略
+            } else if (local === "bookmarkStart" || local === "bookmarkEnd" || local === "proofErr" || local === "instrText" || local === "fldChar") {
+                // 忽略书签、校对标记和 Word 域指令；域结果中的可见 w:t 仍会正常保留
             } else {
                 walk(child, bold, italic, sup, sub);
             }
@@ -149,44 +150,69 @@ function docxRunsToText(
     return out;
 }
 
-/** 段落 → markdown 行（含内联格式与图片占位符） */
-function docxParaToMd(p: Element, addRef: (rId: string, alt: string) => void): { md: string } {
+/** 段落 → markdown 块（含标题、列表、硬分页、内联格式与图片占位符） */
+function docxParaToMd(
+    p: Element,
+    addRef: (rId: string, alt: string) => void,
+    styleLevels: Map<string, number>
+): { md: string } {
     let level = 0;
+    let listLevel: number | null = null;
     const pPr = firstChildNS(p, W, "pPr");
     if (pPr) {
         const pStyle = firstChildNS(pPr, W, "pStyle");
         if (pStyle) {
             const style = pStyle.getAttributeNS(W, "val") || "";
-            const m = /^(?:Heading|heading|标题)\s*(\d)$/.exec(style);
-            if (m) {
-                level = parseInt(m[1], 10);
-            } else if (/^Title$/i.test(style)) {
-                level = 1;
+            level = styleLevels.get(style) || 0;
+            if (!level) {
+                const m = /^(?:Heading|heading|标题)\s*(\d)$/.exec(style);
+                if (m) {
+                    level = parseInt(m[1], 10);
+                } else if (/^Title$/i.test(style)) {
+                    level = 1;
+                }
             }
+        }
+        const numPr = firstChildNS(pPr, W, "numPr");
+        const ilvl = numPr && firstChildNS(numPr, W, "ilvl");
+        if (ilvl) {
+            listLevel = parseInt(ilvl.getAttributeNS(W, "val") || "0", 10) || 0;
         }
     }
     const runs = docxRunsToText(p, addRef);
-    let text = "";
+    const lines: string[] = [];
     const imgs: string[] = [];
+    let text = "";
+    const flushText = () => {
+        const content = text.trim();
+        text = "";
+        if (!content) {
+            return;
+        }
+        if (level > 0) {
+            const headText = content.replace(/\*\*/g, "");
+            if (headText) {
+                lines.push(`${"#".repeat(level)} ${headText}`);
+            }
+        } else if (listLevel !== null) {
+            lines.push(`${"  ".repeat(listLevel)}1. ${content}`);
+        } else {
+            lines.push(content);
+        }
+    };
     for (const run of runs) {
         if (run.type === "img") {
             imgs.push(`%%SYASS_IMG:${run.rId}%%`);
+        } else if (run.type === "pageBreak") {
+            flushText();
+            lines.push("---");
         } else {
             text += run.markdown;
         }
     }
-    text = text.trim();
-    const lines: string[] = [];
-    if (level > 0) {
-        const headText = text.replace(/\*\*/g, "");
-        if (headText) {
-            lines.push(`${"#".repeat(level)} ${headText}`);
-        }
-    } else if (text) {
-        lines.push(text);
-    }
+    flushText();
     lines.push(...imgs);
-    return { md: lines.join("\n") };
+    return { md: lines.join("\n\n") };
 }
 
 /** 表格 → markdown 表格（gridSpan 补空、vMerge continue 跳过、全空行跳过） */
@@ -262,6 +288,28 @@ function docxTableToMd(tbl: Element, addRef: (rId: string, alt: string) => void)
     return lines.join("\n");
 }
 
+/** styles.xml 中 paragraph styleId → Word outlineLvl（0-based）映射到 Markdown H1-H6。 */
+function parseStyleLevels(stylesXml: string, parser: DOMParser): Map<string, number> {
+    const levels = new Map<string, number>();
+    const stylesDoc = parser.parseFromString(stylesXml, "application/xml");
+    for (const style of Array.from(stylesDoc.getElementsByTagNameNS(W, "style"))) {
+        if (style.getAttributeNS(W, "type") !== "paragraph") {
+            continue;
+        }
+        const styleId = style.getAttributeNS(W, "styleId");
+        const pPr = firstChildNS(style, W, "pPr");
+        const outline = pPr && firstChildNS(pPr, W, "outlineLvl");
+        const rawLevel = outline && outline.getAttributeNS(W, "val");
+        if (styleId && rawLevel !== null && rawLevel !== undefined) {
+            const level = parseInt(rawLevel, 10) + 1;
+            if (level >= 1 && level <= 6) {
+                levels.set(styleId, level);
+            }
+        }
+    }
+    return levels;
+}
+
 /**
  * 解析 docx 文件内容
  * @param ab        docx 文件的 ArrayBuffer
@@ -283,6 +331,10 @@ export async function parseDocx(
     const docXml = await docXmlFile.async("string");
     const parser = new DOMParser();
     const doc = parser.parseFromString(docXml, "application/xml");
+    const stylesFile = zip.file("word/styles.xml");
+    const styleLevels = stylesFile
+        ? parseStyleLevels(await stylesFile.async("string"), parser)
+        : new Map<string, number>();
 
     const relsMap = new Map<string, string>();
     const relsFile = zip.file("word/_rels/document.xml.rels");
@@ -327,7 +379,7 @@ export async function parseDocx(
         const el = child as Element;
         const local = el.localName || "";
         if (local === "p") {
-            const res = docxParaToMd(el, addRef);
+            const res = docxParaToMd(el, addRef, styleLevels);
             if (res.md.trim()) {
                 blocks.push(res.md);
                 if (!firstH1 && /^# /.test(res.md)) {

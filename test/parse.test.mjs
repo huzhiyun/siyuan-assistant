@@ -18,6 +18,10 @@ const DOCUMENT_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t>封面标题</w:t></w:r></w:p>
   <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>第一部分 总述</w:t></w:r></w:p>
   <w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>1.1 服务范围</w:t></w:r></w:p>
+  <w:p><w:pPr><w:pStyle w:val="42"/></w:pPr><w:r><w:t>数字样式标题</w:t></w:r></w:p>
+  <w:p><w:r><w:t>分页前</w:t></w:r><w:r><w:br w:type="page"/></w:r><w:r><w:t>分页后</w:t></w:r></w:p>
+  <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>第一项</w:t></w:r></w:p>
+  <w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> INCLUDEPICTURE &quot;https://example.invalid/image.png&quot; \\* MERGEFORMAT </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>域后正文</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>
   <w:p><w:r><w:t>这是</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>加粗</w:t></w:r><w:r><w:t>和</w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t>斜体</w:t></w:r><w:r><w:t>文本。</w:t></w:r></w:p>
   <w:tbl>
     <w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>合并单元格A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr>
@@ -38,6 +42,14 @@ const RELS_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/>
 </Relationships>`;
 
+const STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="42">
+    <w:name w:val="Custom Heading 3"/>
+    <w:pPr><w:outlineLvl w:val="2"/></w:pPr>
+  </w:style>
+</w:styles>`;
+
 // 1x1 红色 PNG
 const PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 const PNG = Buffer.from(PNG_B64, "base64");
@@ -45,6 +57,7 @@ const PNG = Buffer.from(PNG_B64, "base64");
 async function buildTestZip() {
     const zip = new JSZip();
     zip.file("word/document.xml", DOCUMENT_XML);
+    zip.file("word/styles.xml", STYLES_XML);
     zip.file("word/_rels/document.xml.rels", RELS_XML);
     zip.file("word/media/image1.png", PNG);
     return zip.generateAsync({ type: "arraybuffer" });
@@ -73,6 +86,13 @@ console.log("=== 标题 ===");
 assert("title = 封面标题 (Title 样式优先)", title === "封面标题", `got: ${title}`);
 assert("H1 块 # 第一部分 总述", md.includes("# 第一部分 总述"));
 assert("H2 块 ## 1.1 服务范围", md.includes("## 1.1 服务范围"));
+assert("数值样式通过 outlineLvl 还原 H3", md.includes("### 数字样式标题"), md);
+
+console.log("=== 结构语义 ===");
+assert("硬分页符转换为独立 thematic break", /(?:^|\n)---(?:\n|$)/.test(md), md);
+assert("numPr 转换为有序列表", /(?:^|\n)1\. 第一项(?:\n|$)/.test(md), md);
+assert("INCLUDEPICTURE 域指令不进入正文", !md.includes("INCLUDEPICTURE") && !md.includes("MERGEFORMAT"), md);
+assert("域后的可见正文保留", md.includes("域后正文"), md);
 
 console.log("=== 内联格式 ===");
 assert("加粗 **加粗**", md.includes("这是**加粗**和*斜体*文本。"), md.split("\n").find(l => l.includes("加粗")));
