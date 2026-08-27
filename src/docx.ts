@@ -238,6 +238,13 @@ function docxParaToMd(
                 }
             }
         }
+        // Word templates sometimes assign outline levels to ordinary body styles.
+        // A first-line-indent paragraph justified on both sides is body prose, not a heading.
+        const ind = firstChildNS(pPr, W, "ind");
+        const jc = firstChildNS(pPr, W, "jc");
+        const firstLine = ind && (ind.getAttributeNS(W, "firstLine") || ind.getAttribute("w:firstLine"));
+        const alignment = jc && (jc.getAttributeNS(W, "val") || jc.getAttribute("w:val"));
+        if (level > 0 && firstLine && alignment === "both") level = 0;
         const numPr = firstChildNS(pPr, W, "numPr");
         const ilvl = numPr && firstChildNS(numPr, W, "ilvl");
         if (ilvl) {

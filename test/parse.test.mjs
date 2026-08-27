@@ -26,6 +26,7 @@ const DOCUMENT_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <w:p><w:r><w:t>这是</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>加粗</w:t></w:r><w:r><w:t>和</w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t>斜体</w:t></w:r><w:r><w:t>文本。</w:t></w:r></w:p>
   <w:p><w:r><w:rPr><w:b/></w:rPr><w:t>·</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>多个</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>连续</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>加粗项</w:t></w:r></w:p>
   <w:p><w:r><w:rPr><w:u w:val="single"/></w:rPr><w:t>带下划线</w:t></w:r><w:r><w:rPr><w:u w:val="none"/></w:rPr><w:t>普通文本</w:t></w:r></w:p>
+  <w:p><w:pPr><w:pStyle w:val="6"/><w:ind w:firstLine="480"/><w:jc w:val="both"/></w:pPr><w:r><w:t>采用ORM框架MyBatis使用预编译功能，实现防SQL注入攻击</w:t></w:r></w:p>
   <w:tbl>
     <w:tblPr><w:jc w:val="center"/></w:tblPr>
     <w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>合并单元格A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr>
@@ -52,6 +53,10 @@ const RELS_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 
 const STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="6">
+    <w:name w:val="正文误标样式"/>
+    <w:pPr><w:outlineLvl w:val="3"/></w:pPr>
+  </w:style>
   <w:style w:type="paragraph" w:styleId="42">
     <w:name w:val="Custom Heading 3"/>
     <w:pPr><w:outlineLvl w:val="2"/></w:pPr>
@@ -107,6 +112,7 @@ assert("显式 w:val=0 的粗斜体开关必须保持普通文本", md.split("\n
 assert("加粗 **加粗**", md.includes("这是**加粗**和*斜体*文本。"), md.split("\n").find(l => l.includes("加粗")));
 assert("连续加粗 run 合并为一对标记", md.includes("**多个连续加粗项**") && !md.includes("**多个****连续"), md.split("\n").find(l => l.includes("多个")));
 assert("中点项目转换为 Markdown 无序列表", md.includes("- **多个连续加粗项**"), md.split("\n").find(l => l.includes("多个")));
+assert("首行缩进且两端对齐的 outline 样式必须保留为正文", md.includes("采用ORM框架MyBatis使用预编译功能，实现防SQL注入攻击") && !md.includes("#### 采用ORM框架MyBatis使用预编译功能，实现防SQL注入攻击"));
 assert("下划线不得使用会污染后续块的 HTML 标记", md.includes("带下划线普通文本") && !md.includes("<u>带下划线</u>"), md.split("\n").find(l => l.includes("带下划线")));
 
 console.log("=== 表格 ===");
