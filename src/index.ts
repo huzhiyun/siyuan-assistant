@@ -17,6 +17,7 @@ import {
     Menu,
     fetchPost,
     getFrontend,
+    getActiveEditor,
 } from "siyuan";
 import { parseDocx, type ImageExtent } from "./docx";
 import { rotatedRasterDimensions } from "./image-layout";
@@ -217,12 +218,14 @@ export default class SiYuanAssistant extends Plugin {
     }
 
     private currentDocId(): string {
+        // Official SiYuan SDK route: works for top-bar commands where the
+        // plugin instance itself has no editor binding.
+        const activeEditor = getActiveEditor(true) as any;
+        const fromActiveEditor = activeEditor?.block?.rootID || activeEditor?.protyle?.block?.rootID;
+        if (fromActiveEditor) return fromActiveEditor;
         const editor = this.currentEditor();
         const fromEditor = editor?.protyle?.block?.rootID;
         if (fromEditor) return fromEditor;
-        // Top-bar commands are invoked outside an editor plugin context in some
-        // SiYuan frontends, so Plugin.getEditor() is empty even with a document open.
-        // The active layout pane's root wysiwyg block carries the document ID.
         const active = document.querySelector(".layout__wnd--active .protyle-wysiwyg[data-node-id]")
             || document.querySelector(".protyle--focus .protyle-wysiwyg[data-node-id]");
         const fromDom = active?.getAttribute("data-node-id") || "";

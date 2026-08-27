@@ -4,7 +4,7 @@
   "url": "",
   "icon": "icon.png",
   "preview": "preview.png",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "minAppVersion": "3.6.4",
   "frontends": [
     "desktop",
