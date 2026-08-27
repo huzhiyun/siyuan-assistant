@@ -706,13 +706,13 @@ export default class SiYuanAssistant extends Plugin {
         const wrap = parseHtml(content);
         const headings: HeadingInfo[] = [];
         for (const el of Array.from(wrap.querySelectorAll<HTMLElement>("div[data-node-index]"))) {
-            if (el.dataset.type !== "NodeHeading") {
+            if (el.getAttribute("data-type") !== "NodeHeading") {
                 continue;
             }
-            const idx = parseInt(el.dataset.nodeIndex || "0", 10);
-            const subtype = el.dataset.subtype || "";
+            const idx = parseInt(el.getAttribute("data-node-index") || "0", 10);
+            const subtype = el.getAttribute("data-subtype") || "";
             const level = /^h([1-6])$/.exec(subtype) ? parseInt(RegExp.$1, 10) : 0;
-            const text = ((el as HTMLElement).innerText || "").replace(/\s+/g, " ").trim().slice(0, 40);
+            const text = (((el as HTMLElement).innerText || el.textContent || "")).replace(/\s+/g, " ").trim().slice(0, 40);
             if (level > 0) {
                 headings.push({ idx, level, text });
             }
@@ -788,6 +788,7 @@ export default class SiYuanAssistant extends Plugin {
             const docId = input.value.trim();
             if (!/^\d{14}-[a-z0-9]{7}$/i.test(docId)) { showMessage("请输入有效 docid（格式：YYYYMMDDHHMMSS-7位字符）"); return; }
             dlg.destroy();
+            showMessage("正在读取文档…");
             void this.openDocxExportOptions(docId);
         });
         setTimeout(() => input.focus(), 0);
@@ -805,13 +806,13 @@ export default class SiYuanAssistant extends Plugin {
         const root = parseHtml(content);
         const headings: HeadingInfo[] = [];
         for (const el of Array.from(root.querySelectorAll<HTMLElement>("div[data-node-index]"))) {
-            if (el.dataset.type !== "NodeHeading") {
+            if (el.getAttribute("data-type") !== "NodeHeading") {
                 continue;
             }
-            const idx = parseInt(el.dataset.nodeIndex || "0", 10);
-            const subtype = el.dataset.subtype || "";
+            const idx = parseInt(el.getAttribute("data-node-index") || "0", 10);
+            const subtype = el.getAttribute("data-subtype") || "";
             const level = /^h([1-6])$/.exec(subtype) ? parseInt(RegExp.$1, 10) : 0;
-            const text = ((el as HTMLElement).innerText || "").replace(/\s+/g, " ").trim().slice(0, 40);
+            const text = (((el as HTMLElement).innerText || el.textContent || "")).replace(/\s+/g, " ").trim().slice(0, 40);
             if (level > 0) {
                 headings.push({ idx, level, text });
             }
