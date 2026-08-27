@@ -15,6 +15,7 @@ import {
     Table,
     TableRow,
     TableCell,
+    TableLayoutType,
     WidthType,
     ShadingType,
     BorderStyle,
@@ -177,7 +178,13 @@ function headingPara(level: number, text: string, opts: DocxGenOptions): Paragra
 
 function tablePara(rows: string[][], opts: DocxGenOptions): Table {
     const nCols = Math.max(...rows.map((r) => r.length));
-    const widthPct = Math.floor(100 / nCols);
+    // A4 text area: 12240 twips page width − 2×1440 twips margins.
+    // Fixed DXA widths make macOS Quick Look honor the same layout as Word.
+    const tableWidth = 9360;
+    const firstColIsNumber = rows.every((r) => /^\s*(?:\d+|[一二三四五六七八九十]+)[.、]?\s*$/.test(r[0] || ""));
+    const firstWidth = firstColIsNumber && nCols > 1 ? 720 : 0;
+    const otherWidth = Math.floor((tableWidth - firstWidth) / (nCols - (firstWidth ? 1 : 0)));
+    const colWidths = Array.from({ length: nCols }, (_, i) => i === 0 && firstWidth ? firstWidth : otherWidth);
     const borders = {
         top: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
         bottom: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
@@ -187,12 +194,13 @@ function tablePara(rows: string[][], opts: DocxGenOptions): Table {
         insideVertical: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
     };
     return new Table({
-        width: { size: 100, type: WidthType.PERCENTAGE },
+        width: { size: tableWidth, type: WidthType.DXA },
+        layout: TableLayoutType.FIXED,
         borders,
         rows: rows.map((r, ri) => {
             const isHeader = ri === 0;
             return new TableRow({
-                children: r.map((cellText) => {
+                children: r.map((cellText, ci) => {
                     const cellRuns = runsFromMd(cellText).map((run) =>
                         new TextRun({
                             text: run.text,
@@ -202,7 +210,7 @@ function tablePara(rows: string[][], opts: DocxGenOptions): Table {
                         })
                     );
                     return new TableCell({
-                        width: { size: widthPct, type: WidthType.PERCENTAGE },
+                        width: { size: colWidths[ci] || otherWidth, type: WidthType.DXA },
                         shading: isHeader
                             ? { type: ShadingType.CLEAR, fill: "D9D9D9" }
                             : undefined,
@@ -348,6 +356,7 @@ export function blocksToDocument(content: ExportContent, opts: Partial<DocxGenOp
                                   text,
                                   alignment: AlignmentType.START,
                                   style: {
+                                      run: { color: "000000", font: HEADING_FONT },
                                       paragraph: {
                                           indent: { left: 240 * (i + 1), hanging: 240 },
                                       },

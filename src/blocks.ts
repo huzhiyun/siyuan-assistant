@@ -293,10 +293,9 @@ export function htmlToBlocks(root: Element, skipCallout: boolean): SyBlock[] {
                 if (listItems.length > 0) {
                     blocks.push({ type: "list", items: listItems });
                 }
-                // 嵌套子块（如列表项下的段落/图片）继续遍历
-                for (const item of items) {
-                    walk(item as Element, depth + 1);
-                }
+                // List item paragraphs are already represented by this list block.
+                // Do not recurse into them, otherwise every item is exported again
+                // as a normal paragraph after the list.
             } else if (dataType === "NodeCodeBlock") {
                 const code = elText(node).replace(/\n+$/, "");
                 blocks.push({ type: "code", code });
