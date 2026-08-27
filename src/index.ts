@@ -218,10 +218,16 @@ export default class SiYuanAssistant extends Plugin {
 
     private currentDocId(): string {
         const editor = this.currentEditor();
-        if (!editor || !editor.protyle || !editor.protyle.block) {
-            throw new Error("请先打开一个文档");
-        }
-        return editor.protyle.block.rootID;
+        const fromEditor = editor?.protyle?.block?.rootID;
+        if (fromEditor) return fromEditor;
+        // Top-bar commands are invoked outside an editor plugin context in some
+        // SiYuan frontends, so Plugin.getEditor() is empty even with a document open.
+        // The active layout pane's root wysiwyg block carries the document ID.
+        const active = document.querySelector(".layout__wnd--active .protyle-wysiwyg[data-node-id]")
+            || document.querySelector(".protyle--focus .protyle-wysiwyg[data-node-id]");
+        const fromDom = active?.getAttribute("data-node-id") || "";
+        if (fromDom) return fromDom;
+        throw new Error("未找到当前活动文档；请点击文档编辑区后重试");
     }
 
     private newDialog(title: string, content: string, width?: string): Dialog {
