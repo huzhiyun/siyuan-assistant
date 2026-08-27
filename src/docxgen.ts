@@ -195,6 +195,7 @@ function tablePara(rows: string[][], opts: DocxGenOptions): Table {
     };
     return new Table({
         width: { size: tableWidth, type: WidthType.DXA },
+        columnWidths: colWidths,
         layout: TableLayoutType.FIXED,
         borders,
         rows: rows.map((r, ri) => {
@@ -285,7 +286,7 @@ export function blocksToDocument(content: ExportContent, opts: Partial<DocxGenOp
                 for (const item of b.items) {
                     children.push(
                         new Paragraph({
-                            children: [new TextRun({ text: item, font: BODY_FONT })],
+                            children: runsFromMd(item).map(runToTextRun),
                             bullet: { level: 0 },
                             indent: { left: 360 },
                             spacing: { line: 360 },
