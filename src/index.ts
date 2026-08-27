@@ -774,14 +774,26 @@ export default class SiYuanAssistant extends Plugin {
     // 功能 2：导出 Word（docx 库，浏览器生成下载）
     // ================================================================
 
-    private async openDocxExportDialog() {
-        let docId = "";
-        try {
-            docId = this.currentDocId();
-        } catch (e) {
-            showMessage((e as Error).message);
-            return;
-        }
+    private openDocxExportDialog() {
+        let detected = "";
+        try { detected = this.currentDocId(); } catch (_) { /* manual selection is supported */ }
+        const dlg = this.newDialog("选择要导出的文档", `<div class="b3-dialog__content">
+  <label class="fn__block b3-label">文档 docid</label>
+  <input id="syassExportDocId" class="b3-text-field fn__block" value="${SiYuanAssistant.escapeHtml(detected)}" placeholder="例如 20260826144442-zsbpwwk">
+  <div class="fn__block b3-label">可直接填写 docid；检测到当前文档时会自动预填。</div>
+</div><div class="b3-dialog__action"><button class="b3-button b3-button--cancel" id="syassCancel">取消</button><span class="fn__space"></span><button class="b3-button b3-button--text" id="syassGo">下一步</button></div>`, "620px");
+        const input = dlg.element.querySelector("#syassExportDocId") as HTMLInputElement;
+        dlg.element.querySelector("#syassCancel").addEventListener("click", () => dlg.destroy());
+        dlg.element.querySelector("#syassGo").addEventListener("click", () => {
+            const docId = input.value.trim();
+            if (!/^\d{14}-[a-z0-9]{7}$/i.test(docId)) { showMessage("请输入有效 docid（格式：YYYYMMDDHHMMSS-7位字符）"); return; }
+            dlg.destroy();
+            void this.openDocxExportOptions(docId);
+        });
+        setTimeout(() => input.focus(), 0);
+    }
+
+    private async openDocxExportOptions(docId: string) {
         let content = "";
         try {
             const resp = await api("/api/filetree/getDoc", { id: docId });
