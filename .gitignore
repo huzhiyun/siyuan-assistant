@@ -9,3 +9,12 @@ index.css
 index.js
 kernel.js
 /i18n
+
+# avoid accidental commit of pnpm lockfiles in npm project
+pnpm-lock.yaml
+pnpm-workspace.yaml
+
+# OS / editor
+Thumbs.db
+*.swp
+*.swo

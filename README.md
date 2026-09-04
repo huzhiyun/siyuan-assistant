@@ -1,52 +1,89 @@
 # SiYuan Assistant
 
-All-in-one plugin for SiYuan, porting frequent Hermes skill operations into the app itself.
+An all-in-one plugin for [SiYuan Note](https://github.com/siyuan-note/siyuan)
+that brings the most-used DOCX import / export operations and a few quality-of-
+life document tools into a single top-bar menu.
+
+> 思源笔记的本地插件：在思源里完成 DOCX 导入、标题降级、图片宽度、节级导出
+> 与 Word 导出。详细中文说明见 `README.zh-CN.md`。
 
 ## Features
 
-1. **Import DOCX** (command `⇧⌘I`): headings (Heading1-9 / Title), paragraphs, inline bold/italic/sup/sub, tables (gridSpan padding, vMerge skip, empty rows skipped), images (extracted by rId and uploaded to assets). Creates doc via createDocWithMd, sets title via renameDoc. First H1 becomes the doc title by default.
-2. **Flatten headings to H5** (command `⇧⌘J`): demote H2~H6 of current doc to H5 (H1 untouched) for easy merge into parent docs.
-3. **Set image width** (command `⇧⌘K`): batch set image widths via setBlockAttrs `custom-data-width-percent` — auto (landscape 85% / portrait 50%) or custom percent.
-4. **Export section** (command `⇧⌘L`): slice current doc by heading range, convert to Markdown, copy to clipboard. Callouts can be skipped.
+| Command | Shortcut | What it does |
+| --- | --- | --- |
+| Import DOCX | `⇧⌘I` | Parse headings (Heading 1–9 / Title), paragraphs, inline bold / italic / underline / sup / sub, tables (gridSpan padding, vMerge skip, empty-row drop), and images (rId-based extraction → upload to `assets`). Create the document via `createDocWithMd` and set the title via `renameDoc`. The first H1 becomes the document title by default. |
+| Flatten headings | `⇧⌘J` | Demote the current document's H2–H6 to H5 (H1 is left alone) so a sub-document can be merged into a parent without disturbing the parent's outline. |
+| Set image width | `⇧⌘K` | Batch-set `custom-data-width-percent` on every image — auto (landscape 85% / portrait 50%) or a custom percent. |
+| Export section | `⇧⌘L` | Slice the current document by heading range, convert to Markdown, copy to clipboard. Callout blocks can be skipped. |
+| Export Word | (menu) | Convert the current document (or a manually-selected docid) to `.docx` in the browser — no server, no `python-docx`, no pandoc. Native multi-level numbering, fixed-width tables for Word/WPS/mac Quick Look, centered image/table blocks, Chinese typography defaults. |
 
-All four features are also available from the top-right "SiYuan Assistant" menu.
+All five features are also available from the top-right **SiYuan Assistant**
+menu.
+
+## Requirements
+
+- SiYuan `>= 3.6.4` (the `minAppVersion` declared in `plugin.json`).
+- Desktop, mobile, or browser frontends — see `frontends` in `plugin.json`.
 
 ## Install
 
-A local SiYuan plugin = a folder inside the workspace `data/plugins/` (the marketplace UI has **no** "install local zip" option):
+A local SiYuan plugin is a folder inside the workspace `data/plugins/`. The
+marketplace UI does **not** have a "install local zip" option.
 
-1. Get `siyuan-assistant-v0.2.0.zip` (NAS: `/hermes/输出/`)
+1. Download `siyuan-assistant-v0.3.13.zip` from the [Releases](../../releases)
+   page (or build your own with `npm run build`).
 2. On the machine running SiYuan (workspace e.g. `/siyuan/workspace/`):
+
    ```bash
    mkdir -p /siyuan/workspace/data/plugins/siyuan-assistant
-   unzip siyuan-assistant-v0.2.0.zip -d /siyuan/workspace/data/plugins/siyuan-assistant/
+   unzip siyuan-assistant-v0.3.13.zip -d /siyuan/workspace/data/plugins/siyuan-assistant/
    ```
-   (the zip contains plugin.json/index.js directly; the folder name must equal the `name` field in plugin.json)
-3. Restart SiYuan (or refresh), then Settings → Marketplace → Downloaded → enable "SiYuan Assistant"
 
-Docker: `docker cp siyuan-assistant-v0.2.0.zip siyuan:/siyuan/workspace/` then unzip inside the container.
+   The zip contains `plugin.json`, `index.js`, etc. directly — the folder
+   name **must** equal the `name` field in `plugin.json`.
 
-## Build
+3. Restart SiYuan (or refresh), then **Settings → Marketplace → Downloaded →
+   enable "SiYuan Assistant"**.
+
+**Docker**:
+
+```bash
+docker cp siyuan-assistant-v0.3.13.zip siyuan:/siyuan/workspace/
+docker exec siyuan mkdir -p /siyuan/workspace/data/plugins/siyuan-assistant
+docker exec siyuan unzip -o /siyuan/workspace/siyuan-assistant-v0.3.13.zip \
+  -d /siyuan/workspace/data/plugins/siyuan-assistant/
+```
+
+## Build from source
 
 ```bash
 npm install
-npm run build
-# Output: package.zip
+npm run typecheck   # tsc --noEmit
+npm test            # esbuild bundles + node test runners (69 cases)
+npm run build       # webpack production build → dist/ + package.zip
 ```
 
-## Known limitations
+`npm run build` produces `package.zip` (≈850 KB) which is the file you deploy
+into `data/plugins/siyuan-assistant/`.
 
-- Target: SiYuan v3.6.4+ (`minAppVersion: 3.6.4`)
-- Doc title is set via the `path` parameter of `createDocWithMd` (verified on v3.6.4: `renameDoc` returns code=0 but silently does nothing, so it is not used)
-- Image upload uses `/api/asset/upload` (verified on v3.6.4: `/api/upload` returns 404), parsing `data.succMap`, with fallback to legacy `data[0].url` format
-- DOCX heading level mapped from Word style names (Heading1-9 / 标题1-9 / Title); Word auto-numbering is not extracted as text
-- Line breaks (`<w:br/>`) become paragraph line breaks after import
-- Underline / strikethrough not mapped to Markdown
-- Table vMerge rows are padded with empty cells (SiYuan plain tables don't support rowspan)
-- Section export Markdown conversion is lightweight; deep nesting may be simplified
-- Image upload tries multiple endpoints (/api/upload, /api/asset/upload) for compatibility
+## Project layout
 
-## Credits
+```
+src/
+  index.ts          # plugin entry: top-bar menu, command registration
+  docx.ts           # DOCX parser (OOXML → Markdown-ish blocks)
+  docxgen.ts        # pure-frontend .docx generator
+  blocks.ts         # shared block model + SiYuan getDoc HTML → blocks
+  image-layout.ts   # image rotation / hash reuse for DOCX import
+test/
+  parse.test.mjs    # DOCX parser regressions
+  blocks.test.mjs   # block model regressions
+  image-layout.test.mjs
+  docxgen.test.mjs
+webpack.config.js   # production build
+plugin.json         # SiYuan plugin manifest
+```
 
-- Template: [siyuan-note/plugin-sample](https://github.com/siyuan-note/plugin-sample)
-- Logic distilled from Hermes skills: siyuan-unified, docx-table-import-siyuan, siyuan-heading-flatten-workflow, siyuan-section-export
+## License
+
+MIT — see `LICENSE`.

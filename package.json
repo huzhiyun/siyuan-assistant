@@ -1,7 +1,10 @@
 {
   "name": "siyuan-assistant",
   "version": "0.3.13",
-  "description": "SiYuan Assistant plugin: DOCX import, heading flatten, image width, section export",
+  "private": true,
+  "description": "SiYuan Assistant plugin: DOCX import, heading flatten, image width, section export, Word export.",
+  "author": "飞翰 / 狐公子",
+  "license": "MIT",
   "main": "src/index.ts",
   "scripts": {
     "build": "webpack --config webpack.config.js --mode production",

@@ -1,6 +1,6 @@
 {
   "name": "siyuan-assistant",
-  "author": "狐公子",
+  "author": "飞翰 / 狐公子",
   "url": "",
   "icon": "icon.png",
   "preview": "preview.png",
@@ -20,8 +20,8 @@
     "zh-CN": "思源助手"
   },
   "description": {
-    "default": "DOCX import, heading flatten, image width, section export",
-    "zh-CN": "DOCX 导入、标题降级、图片宽度、节级导出一体化工具"
+    "default": "DOCX import, heading flatten, image width, section export, Word export.",
+    "zh-CN": "DOCX 导入、标题降级、图片宽度、节级导出、Word 导出的一体化工具"
   },
   "readme": {
     "default": "README.md",
